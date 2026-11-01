@@ -1,5 +1,6 @@
 import unittest
 import json
+import os
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,6 +14,10 @@ class ItermScope(unittest.TestCase):
         self.assertEqual(session_id('w0t8p0:' + value), value)
         with self.assertRaises(ValueError):
             session_id('not-a-session')
+        with patch.dict(os.environ, {'ITERM_SESSION_ID': value}):
+            with self.assertRaises(ValueError):
+                session_id('')
+            self.assertEqual(session_id(None), value)
 
     def test_failed_attach_restores_only_its_own_variable(self):
         identifier = '11111111-2222-4333-8444-555555555555'
@@ -50,7 +55,7 @@ class ItermScope(unittest.TestCase):
         rows += [{'active': True, 'thread_id': 'other', 'codex_home': '/exact/home'},
                  {'active': True, 'thread_id': 'current', 'codex_home': '/other/home'},
                  {'active': False, 'thread_id': 'current', 'codex_home': '/exact/home'}]
-        self.assertEqual(label_for_rows(rows, 'current', '/exact/home'), (2, 'monitor-2'))
+        self.assertEqual(label_for_rows(rows, 'current', '/exact/home'), (2, '2 monitors'))
         self.assertEqual(label_for_rows(rows, 'missing', '/exact/home'), (0, ''))
 
     def test_stop_during_probe_prevents_a_late_counter_write(self):

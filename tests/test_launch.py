@@ -182,6 +182,9 @@ class LaunchRunner(unittest.TestCase):
         patch('codex_monitor.launch.os.ttyname', return_value=TTY).start()
         self.duplicate = patch('codex_monitor.launch.os.dup', return_value=DESCRIPTOR).start()
         self.close_fd = patch('codex_monitor.launch.os.close').start()
+        patch('codex_monitor.launch.launch_session', return_value=SESSION).start()
+        self.home_discovery = patch('codex_monitor.launch.discover_client_home',
+                                    return_value=str(self.root / 'selected-profile')).start()
         self.decoration_class = patch('codex_monitor.launch.Decoration').start()
         self.decoration = self.decoration_class.return_value
         self.decoration.identifier, self.decoration.token = SESSION, TOKEN
@@ -211,17 +214,30 @@ class LaunchRunner(unittest.TestCase):
         self.assertEqual(command[0], self.original)
         self.assertEqual(command[-len(arguments):], arguments)
         overrides = command[1:-len(arguments)]
-        self.assertEqual(overrides[::2], ['-c', '-c', '-c'])
+        self.assertEqual(overrides[::2], ['-c', '-c', '-c', '-c'])
         values = {key: json.loads(value) for key, value in (item.split('=', 1) for item in overrides[1::2])}
         self.assertEqual(values, {
             'shell_environment_policy.set.CODEX_MONITOR_LAUNCH_TOKEN': TOKEN,
             'shell_environment_policy.set.CODEX_MONITOR_ITERM_SESSION': SESSION,
             'shell_environment_policy.set.CODEX_MONITOR_HOME': str(self.root),
+            'tui.terminal_title': ['app-name', 'thread-id', 'app-name', 'thread-name', 'project-name'],
         })
         self.assertEqual(environment, dict(self.environment, CODEX_MONITOR_LAUNCH_ACTIVE=TOKEN))
         self.assertIs(decoration, self.decoration)
+        self.home_discovery.assert_called_once_with(self.original, arguments)
+        self.decoration_class.assert_called_once_with(
+            self.root, SESSION, DESCRIPTOR, client_counter=True,
+            codex_home=str(self.root / 'selected-profile'))
         self.decoration.close.assert_called_once()
         self.close_fd.assert_called_once_with(DESCRIPTOR)
+
+    def test_unresolved_account_wrapper_launches_original_without_guessing_parent_home(self):
+        self.home_discovery.side_effect = RuntimeError('selected Codex profile unavailable')
+        arguments = ['resume', '--last']
+        with patch('sys.stderr', new_callable=io.StringIO):
+            self.assertEqual(launch(self.root, self.original, arguments), 7)
+        self.wait.assert_called_once_with([self.original] + arguments, self.environment, None)
+        self.decoration_class.assert_not_called()
 
     def test_skipped_modes_do_not_duplicate_terminal_or_construct_decoration(self):
         scenarios = [({'TERM_PROGRAM': 'Apple_Terminal'}, []),

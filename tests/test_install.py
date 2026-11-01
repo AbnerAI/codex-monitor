@@ -8,6 +8,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from codex_monitor import __version__
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -27,7 +29,7 @@ class Installation(unittest.TestCase):
             wrapper = skill / 'scripts/monitor.py'
             completed = subprocess.run([sys.executable, '-B', str(wrapper), '--version'],
                                        check=True, capture_output=True, text=True)
-            self.assertEqual(completed.stdout.strip(), '0.1.0')
+            self.assertEqual(completed.stdout.strip(), __version__)
             (skill / 'old-only.txt').write_text('preserve this previous installation\n')
             (skill / 'SKILL.md').write_text('previous skill instructions\n')
             again = subprocess.run(command, check=True, capture_output=True, text=True)

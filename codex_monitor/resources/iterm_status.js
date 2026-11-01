@@ -6,11 +6,14 @@ function run(argv) {
     const action = argv[0];
     const expected = argv[1];
     const payload = JSON.parse(argv[2]);
-    if (!expected || !payload || typeof payload !== 'object' || Array.isArray(payload)) {
-        throw new Error('Expected a session UUID and an object payload');
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        throw new Error('Expected an object payload');
     }
-    if (action !== 'probe' && action !== 'variables') {
+    if (action !== 'identify' && action !== 'probe' && action !== 'variables') {
         throw new Error('Unknown action: ' + action);
+    }
+    if (action !== 'identify' && !/^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$/.test(expected)) {
+        throw new Error('Expected an exact authorized session UUID');
     }
     if (action === 'variables' && typeof payload.label !== 'string') {
         throw new Error('Expected a string monitor label');
@@ -23,14 +26,21 @@ function run(argv) {
     const win = app.currentWindow();
     const selected = win.currentSession();
     const id = selected.uniqueID();
+    if (action === 'identify') {
+        return JSON.stringify({session_id: id.toUpperCase(), tty: selected.tty(),
+            panes: win.currentTab().sessions().length});
+    }
     if (id.toLowerCase() !== expected.toLowerCase()) {
-        throw new Error('Current session mismatch; nothing changed');
+        return JSON.stringify({error: {code: 'iterm_session_mismatch',
+            expected_session_id: expected.toUpperCase(), observed_session_id: id.toUpperCase()}});
     }
     const tab = win.currentTab();
     // Pin every later operation to the UUID, even if the user switches tabs.
     const session = tab.sessions.byId(expected);
-    if (session.uniqueID().toLowerCase() !== expected.toLowerCase()) {
-        throw new Error('Authorized session is unavailable; nothing changed');
+    const pinnedID = session.uniqueID();
+    if (pinnedID.toLowerCase() !== expected.toLowerCase()) {
+        return JSON.stringify({error: {code: 'iterm_session_mismatch',
+            expected_session_id: expected.toUpperCase(), observed_session_id: pinnedID.toUpperCase()}});
     }
     const panes = tab.sessions().length;
     if (panes !== 1) {

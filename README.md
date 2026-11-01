@@ -30,13 +30,14 @@ flowchart TB
     subgraph iterm["Optional iTerm2 status counter"]
         launcher["Codex-only launch wrapper"]
         updater["Scoped count updater"]
-        bar["iTerm2 status bar<br/>monitor-2"]
+        bar["iTerm2 status bar<br/>2 monitors"]
         launcher -->|"Python API<br/>capture / add / restore layout"| bar
-        updater -->|"AppleEvents<br/>user.codexMonitor"| bar
+        launcher -->|"startup / reconnect"| updater
+        updater -->|"auto: held-TTY OSC<br/>manual: AppleEvents<br/>user.codexMonitor"| bar
     end
 
-    launcher -.->|"original entry + scoped tool environment"| conversation
-    cli -.->|"watch-time binding<br/>valid lease + exact terminal UUID"| updater
+    launcher -.->|"original entry + client-local native ID markers"| conversation
+    cli -.->|"manual iterm attach<br/>confirmed terminal identity"| updater
     updater -.->|"poll watcher list<br/>filter thread + CODEX_HOME"| control
 ```
 
@@ -157,7 +158,8 @@ guesses the newest conversation or switches a global Codex profile.
 ## Optional iTerm2 indicator
 
 The indicator counts active watchers for one exact Codex thread and normalized
-`CODEX_HOME`: two show `monitor-2`, one shows `monitor-1`, and zero is blank.
+`CODEX_HOME`: one shows `1 monitor`, two show `2 monitors`, three show
+`3 monitors`, and zero is blank.
 It uses an iTerm2 status-bar component rather than Codex's native footer.
 
 ### Automatic setup for new Codex shells
@@ -223,21 +225,46 @@ non-TTY invocations, and non-iTerm2 terminals skip automatic display setup.
 The current adapter requires a single-pane tab; unsupported layouts start
 Codex without this optional indicator.
 
-When a `watch` command registers a watcher, it can attach the indicator using a
-fresh launcher token, a private live lease, the exact terminal UUID, and the
-current thread/profile. The token and terminal identity are passed into that
-Codex invocation's tool environment, so an unrelated shared app-server's old
-environment is not used as routing evidence. Without a valid launch token,
-watching does not invent an automatic terminal binding. An indicator failure
-does not discard an already-registered watcher.
+Since 0.1.1 the launcher owns the automatic count loop from startup and
+reconnect. It proves the launching terminal by comparing the actual
+stdin/stdout TTY with read-only iTerm2 metadata; a cached environment variable
+or GUI focus alone does not establish ownership. It then reads identity only
+from that exact terminal and publishes the count through its held TTY FD.
+Counting continues for that owned terminal when focus moves elsewhere.
+
+For this run only, it passes the native Codex setting
+`tui.terminal_title=["app-name","thread-id","app-name","thread-name","project-name"]`.
+This **changes Codex's own terminal title** to include the first three fields
+`codex | <native thread ID> | codex`; it does not edit a Codex configuration
+file or a shared iTerm2 profile. Descriptive title fields are not searched for
+an ID. Codex 0.166.0 truncates the native thread ID to 29 characters plus `...`.
+The launcher resolves the client's authoritative `CODEX_HOME` through the
+original CLI entry, preserving its account-selection wrapper. Registry entries
+from other homes are excluded. Within that exact normalized home, the native
+field must match exactly one full thread ID. An unresolved home or missing,
+malformed, or ambiguous identity hides the count rather than guessing.
+
+Home resolution uses the original CLI's daemon-version lookup to select the
+endpoint, then reads the authoritative `codexHome` from `initialize`. On a cold
+launch with no daemon, it uses a bounded temporary stdio app-server for that
+initialization and cleans it up. This does not start a daemon, thread, turn, or
+model request, and does not change configuration.
+
+The loop checks the owned terminal and registry on each tick, so resuming an
+existing thread restores its registered watcher count without registering a
+new watcher or making a model request. It does not depend on a shared
+app-server's environment or on environment overrides cached by a resumed
+thread. Scoped tokens remain assistance for explicit manual operations, not a
+substitute for the authoritative client home. The `watch` command does not
+automatically attach an indicator; the launcher loop owns its lifecycle.
+An optional indicator failure does not discard an already-registered watcher.
 
 Normal Codex exit clears the counter and restores the captured status-bar
 settings if they still match the layout applied by the launcher. Layout edits
 made by the user while Codex runs are preserved. Watchers and the service are
-not stopped by display cleanup. If the launcher is killed with `SIGKILL`, counter
-clearing may wait until the terminal becomes current; a blank bar may remain
-until the next Codex launch repairs the stale layout. Cleanup after a hard kill
-is not guaranteed to run immediately.
+not stopped by display cleanup. If the launcher is killed with `SIGKILL`, a
+counter value or blank bar may remain until a later Codex launch repairs the
+stale owned state. Cleanup after a hard kill is not guaranteed to run immediately.
 
 For an explicit launch without the zsh function:
 
@@ -253,12 +280,45 @@ python3 scripts/install_iterm.py --uninstall
 ```
 
 This does not terminate running Codex sessions, disable the API, remove the
-runtime, or alter the original `codex` entry point. With the API enabled, a live
-lifecycle check in the authorized current shell passed automatic component
-addition, exact-thread binding, `monitor-2`, exit clearing, and restoration of
+runtime, or alter the original `codex` entry point. In 0.1.0, a live lifecycle
+check in the authorized current shell passed automatic component
+addition, exact-thread binding, count display, exit clearing, and restoration of
 the original layout. That check did not open another iTerm2 window or start a
 fresh interactive Codex TUI. The core service and manual indicator remain
 usable while the Python API is disabled; see [validation notes](docs/validation.md).
+
+### Upgrading to 0.1.1 and checking identity
+
+Upgrade the service/CLI and refresh the managed zsh hook with the source
+installers above. In a newly opened interactive shell, check
+`codex-monitor --version`, `whence -w codex`, and `whence -p codex`. Existing aliases/functions
+are preserved, so an older or custom definition may bypass the new launcher.
+Already-running Codex clients need a new launch to use native identity markers;
+do not kill, close, or reload other running shells.
+
+Use this read-only diagnostic before changing a manual binding:
+
+```bash
+codex-monitor iterm identify
+```
+
+It reports full expected/observed UUIDs, identity source, and token presence
+without disclosing token values. Selection order is explicit `--session`, then
+a valid scoped launch lease, then legacy `ITERM_SESSION_ID` only if scoped
+identity is entirely absent. Partial, invalid, or expired scoped identity does
+not fall back to legacy environment. A focused GUI session is an observation,
+not permission to bind it. On mismatch, use an explicit full `--session` UUID
+only after the user confirms that terminal is the intended target.
+An unconfirmed legacy-environment candidate cannot create or rebind an
+attachment: it requires that explicit confirmation even when it matches GUI
+focus. An already matching attachment can be inspected without rebinding.
+
+`undef` is not a zero count: the user variable has not been resolved or
+initialized. Blank is expected for zero watchers, and also when the counter
+withholds an unavailable or ambiguous identity. Check `identify` and
+`iterm status` to distinguish these cases. Automatic new/resumed client
+behavior in 0.1.1 has separate release evidence; the earlier 0.1.0 lifecycle
+check is not proof of that fix.
 
 ### Manual setup in the current session
 
@@ -274,12 +334,14 @@ codex-monitor iterm detach
 Run these from the intended Codex conversation with that iTerm2 session current.
 `attach` binds its exact thread and normalized `CODEX_HOME`, checks the iTerm2
 session UUID and single-pane tab, and starts a count updater. Only active watchers
-in that scope count: two show `monitor-2`; zero is blank. If another iTerm2 session
+in that scope count: one shows `1 monitor`, two show `2 monitors`, and zero is blank. If another iTerm2 session
 becomes current, the updater pauses instead of looking for or changing it. The
 value may lag while paused. `detach` stops the updater and restores the prior
 `user.codexMonitor` value; it does not stop watchers or the monitor service.
 After changing the Codex thread or profile, detach and attach again for the exact
-new target. The attachment never infers or follows a replacement target.
+new target. Manual identity uses the explicit/scoped/legacy precedence described
+above; a validated launcher marker is no longer ignored in favor of a stale
+legacy variable. The attachment never infers or follows a replacement target.
 
 To show the variable, open **Session > Edit Session > Session > Status bar >
 Configure** in that session. Enable the status bar if needed. Drag
@@ -303,12 +365,12 @@ each new Codex thread needs an explicit `iterm attach` for its exact target,
 with `detach` first when reusing an already-bound session. The current session's
 existing manual setup remains valid.
 
-Live variable publication passed blank → `monitor-2` → `monitor-1` → blank while
+Earlier live variable publication verified the two-to-one-to-zero transitions while
 leaving the title format and service instance unchanged. Before the hyphen was
 added, the user confirmed the original visible value `monitor2` during a
 30-second check with two test-owned watchers active in the authorized current
-shell. The current label format is
-`monitor-N`, such as `monitor-2` or `monitor-1`. See iTerm2's
+shell. The current labels use count grammar: `1 monitor`, `2 monitors`,
+`3 monitors`, and blank at zero. See iTerm2's
 [status-bar documentation](https://iterm2.com/documentation-status-bar.html) and
 [current-session settings scope](https://iterm2.com/documentation-menu-items.html#session-edit-session).
 
@@ -373,7 +435,9 @@ the same state directory; a file lock prevents duplicate ownership.
 | Startup failure | Inspect `~/.codex-monitor/startup.log`; check state path permissions/length. |
 | Automatic iTerm2 indicator unavailable | In the intended current single-pane shell, run `codex-monitor iterm api-status`; check the Python API checkbox and optional client runtime. Keep default authentication; do not enable an allow-all-applications setting. |
 | New shell still uses an unwrapped `codex` | Check PATH with `whence -p codex` and the active definition with `whence -w codex`; existing aliases/functions are deliberately preserved. The managed block loads in new interactive zsh shells, without reloading running shells. |
-| Counter is blank | Zero active watchers is intentionally blank. The launcher binds only after a watcher registers from the exact Codex thread; unsupported remote/non-TTY/multi-pane launches skip display setup. |
+| Counter is blank or `undef` | Blank can mean zero, unavailable, or deliberately hidden ambiguous identity; `undef` is not zero. Run `iterm identify` and `iterm status`. Unsupported remote/non-TTY/multi-pane launches skip display setup. |
+| Identity mismatch | Compare full expected/observed UUIDs from `iterm identify`. GUI focus alone is not ownership proof; use `--session` only after user confirmation, never a different shell's environment. |
+| New/resumed Codex count is missing | Upgrade the CLI and refresh the zsh hook, inspect `whence -w codex` / `whence -p codex`, then launch Codex anew. The loop resolves native identity against active watcher scopes without requiring a new watcher. |
 
 To uninstall, stop/unwatch first. The paths listed in the install table belong
 to this tool; move those artifacts aside. Keep `~/.codex-monitor/` if you want
@@ -433,7 +497,7 @@ The model-backed full test requires working inference connectivity; a successful
 local WebSocket handshake alone is insufficient.
 
 Upload this repository to your own GitHub repository; no remote is preconfigured.
-The packaging script creates `dist/codex-monitor-0.1.0.zip` and
+The packaging script creates `dist/codex-monitor-0.1.1.zip` and
 `dist/codex-monitor.skill`. Extract the latter as a skill folder; it still needs
 the independently installed service. Personal paths and runtime/account data
 are excluded from these release archives.

@@ -7,6 +7,14 @@ import tempfile
 import time
 
 
+def format_count(count, show_zero=False):
+    if type(count) is not int or count < 0:
+        raise ValueError('monitor count must be a nonnegative integer')
+    if not count and not show_zero:
+        return ''
+    return '{} {}'.format(count, 'monitor' if count == 1 else 'monitors')
+
+
 def _scope(thread_id, codex_home):
     if not isinstance(thread_id, str) or not thread_id.strip():
         return None
@@ -94,7 +102,7 @@ def write_snapshot(state_dir, watchers, running=True, now=None):
 
 
 def read_label(snapshot, thread_id, codex_home, now=None, max_age=5, show_zero=False):
-    """Return monitor-N only from valid, running, fresh state for the exact scope.
+    """Return a count only from valid, running, fresh state for the exact scope.
 
     show_zero reveals a zero count from healthy state. Invalid or unavailable
     state stays hidden even when show_zero is enabled.
@@ -127,4 +135,4 @@ def read_label(snapshot, thread_id, codex_home, now=None, max_age=5, show_zero=F
             return ''
         counts[row_scope] = count
     count = counts.get(scope, 0)
-    return 'monitor-' + str(count) if count or show_zero else ''
+    return format_count(count, show_zero=show_zero)

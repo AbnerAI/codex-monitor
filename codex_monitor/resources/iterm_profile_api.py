@@ -25,8 +25,8 @@ def validate_request(request):
     if not isinstance(request, dict) or set(request) - {"action", "session_id", "properties"}:
         raise InvalidRequest("Expected action, exact session_id, and optional properties")
     action = request.get("action")
-    if action not in ("get", "apply", "clear"):
-        raise InvalidRequest("Action must be get, apply, or clear")
+    if action not in ("get", "apply", "clear", "identity"):
+        raise InvalidRequest("Action must be get, apply, clear, or identity")
     identifier = request.get("session_id")
     if not isinstance(identifier, str) or not _SESSION_ID.fullmatch(identifier):
         raise InvalidRequest("session_id must be an exact UUID")
@@ -75,6 +75,16 @@ async def _get_profile(api, connection, identifier):
 
 
 async def _operate(api, connection, action, identifier, properties):
+    if action == "identity":
+        message = await api.rpc.async_variable(
+            connection, session_id=identifier, gets=["session.autoNameFormat"])
+        response = _check_response(api, message, "variable_response", "VariableResponse")
+        if len(response.values) != 1:
+            raise RuntimeError("Unexpected session identity response")
+        title = json.loads(response.values[0])
+        if title is not None and not isinstance(title, str):
+            raise RuntimeError("Unexpected session identity type")
+        return {"native_title": title}
     if action == "clear":
         message = await api.rpc.async_variable(
             connection, session_id=identifier, sets=[("user.codexMonitor", json.dumps(""))])

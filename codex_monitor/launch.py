@@ -14,6 +14,9 @@ import uuid
 from .iterm import action, attachment_path, save, session_id, stop_owned_launch_updater, stop_updater
 from .launch_state import (create_lease, invalidate_lease, launch_lock, lease_path,
                            read_lease, refresh_lease, valid_lease)
+from .client_counter import TITLE_ITEMS, resolve_counter
+from .client_home import discover_client_home
+from .daemon import control
 
 EXPRESSION = r'\(user.codexMonitor)'
 COMPONENT = {'class': 'iTermStatusBarSwiftyStringComponent',
@@ -53,13 +56,15 @@ def interactive_arguments(arguments):
     return positional not in NONINTERACTIVE
 
 
-def runtime_overrides(identifier, token, state_dir=None):
+def runtime_overrides(identifier, token, state_dir=None, client_counter=False):
     # Explicit per-invocation tool environment avoids using environment left in
     # a shared app-server by a different terminal. No model/permission override.
     result = ['-c', 'shell_environment_policy.set.CODEX_MONITOR_LAUNCH_TOKEN=' + json.dumps(token),
               '-c', 'shell_environment_policy.set.CODEX_MONITOR_ITERM_SESSION=' + json.dumps(identifier)]
     if state_dir is not None:
         result += ['-c', 'shell_environment_policy.set.CODEX_MONITOR_HOME=' + json.dumps(str(state_dir))]
+    if client_counter:
+        result += ['-c', 'tui.terminal_title=' + json.dumps(TITLE_ITEMS)]
     return result
 
 
@@ -121,10 +126,9 @@ def apply_profile(identifier, value):
                                              'Show Status Bar': value['enabled']})
 
 
-def clear_terminal_variable(descriptor):
+def _write_terminal(descriptor, data):
     # This is a duplicate of the launcher's actual terminal FD, never a reopened
     # cached tty path. It still targets that terminal when focus moves elsewhere.
-    data = b'\x1b]1337;SetUserVar=codexMonitor=' + base64.b64encode(b'') + b'\x07'
     while data:
         try:
             written = os.write(descriptor, data)
@@ -135,15 +139,49 @@ def clear_terminal_variable(descriptor):
         data = data[written:]
 
 
+def publish_terminal_variable(descriptor, label):
+    _write_terminal(descriptor, b'\x1b]1337;SetUserVar=codexMonitor=' +
+                    base64.b64encode(label.encode('utf-8')) + b'\x07')
+
+
+def clear_terminal_variable(descriptor):
+    publish_terminal_variable(descriptor, '')
+
+
+def _write_terminal_title(descriptor, title):
+    if not isinstance(title, str) or len(title) > 4096 or any(ord(c) < 32 or ord(c) == 127 for c in title):
+        raise ValueError('Cannot safely restore terminal title text')
+    _write_terminal(descriptor, b'\x1b]0;' + title.encode('utf-8') + b'\x07')
+
+
+def launch_session(descriptor):
+    """Prove launch origin with its real terminal FD, never GUI focus alone."""
+    observed = action('identify', None)
+    if (not os.isatty(descriptor) or observed.get('tty') != os.ttyname(descriptor)
+            or observed.get('panes') != 1):
+        raise ValueError('The focused iTerm2 session does not match the launching terminal FD')
+    identifier = observed.get('session_id')
+    if not isinstance(identifier, str) or not identifier:
+        raise ValueError('iTerm2 did not report an exact launching session UUID')
+    return session_id(identifier)
+
+
 class Decoration:
-    def __init__(self, root, identifier, descriptor):
+    def __init__(self, root, identifier, descriptor, client_counter=False, codex_home=None):
         self.root, self.identifier, self.descriptor = root, identifier, descriptor
         self.token = uuid.uuid4().hex
         self.original = self.applied = None
         self.created = False
         self.ready = False
+        self.client_counter = client_counter
+        self.codex_home = codex_home
+        self.last_label = ''
+        self.original_native_title = None
+        self.starting_title = 'codex-monitor: starting ' + uuid.uuid4().hex[:12]
 
     def prepare(self):
+        if self.client_counter and not self.codex_home:
+            raise ValueError('The launching Codex profile has not been established')
         metadata = action('probe', self.identifier)
         if not os.isatty(self.descriptor) or os.ttyname(self.descriptor) != metadata['tty']:
             raise ValueError('Terminal FD does not belong to the authorized iTerm2 session')
@@ -162,7 +200,8 @@ class Decoration:
             self.created = True
             path = lease_path(self.root, self.identifier)
             lease = read_lease(self.root, self.identifier)
-            lease.update(original=self.original, applied=self.applied)
+            lease.update(original=self.original, applied=self.applied,
+                         counter_manager='launch_client' if self.client_counter else 'watch_worker')
             save(path, lease)
             # Retire a manually attached updater in this same terminal. Watchers
             # remain active and keep notifying their original conversations.
@@ -175,12 +214,44 @@ class Decoration:
             readback = apply_profile(self.identifier, self.applied)
             if readback != self.applied:
                 raise RuntimeError('iTerm2 did not retain the requested current-session layout')
+            if self.client_counter:
+                self.original_native_title = profile_api(self.identifier, 'identity').get('native_title')
+                # A stale title from an earlier CLI must not count as evidence
+                # for this launch. The new official client emits its own ID.
+                _write_terminal_title(self.descriptor, self.starting_title)
+                deadline = time.monotonic() + 2
+                while profile_api(self.identifier, 'identity').get('native_title') != self.starting_title:
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError('iTerm2 has not confirmed this launch identity epoch')
+                    time.sleep(0.03)
             self.ready = True
         return self
 
     def heartbeat(self):
         with launch_lock(self.root, self.identifier):
             refresh_lease(self.root, self.identifier, self.token)
+
+    def update_counter(self):
+        if not self.client_counter:
+            return
+        try:
+            native = profile_api(self.identifier, 'identity').get('native_title')
+            rows = control(self.root, {'method': 'list'}, timeout=1)
+            if not isinstance(rows, list):
+                raise ValueError('The monitor registry returned an invalid watcher list')
+            result = resolve_counter(native, rows, self.codex_home)
+        except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
+            result = {'state': 'counter_unavailable', 'thread_id': None, 'codex_home': None,
+                      'active': None, 'label': '', 'native_prefix': None}
+        with launch_lock(self.root, self.identifier):
+            if not valid_lease(self.root, self.identifier, self.token):
+                return
+            lease = read_lease(self.root, self.identifier)
+            lease['counter'] = result
+            save(lease_path(self.root, self.identifier), lease)
+            if result['label'] != self.last_label:
+                publish_terminal_variable(self.descriptor, result['label'])
+                self.last_label = result['label']
 
     def close(self):
         if not self.created:
@@ -200,6 +271,10 @@ class Decoration:
                         rollback[key] = self.original[field]
                 if rollback:
                     profile_api(self.identifier, 'apply', rollback)
+            if self.client_counter and self.original_native_title is not None:
+                current_title = profile_api(self.identifier, 'identity').get('native_title')
+                if current_title == self.starting_title:
+                    _write_terminal_title(self.descriptor, self.original_native_title)
             # If the user edited their layout while Codex ran, preserve it.
 
 
@@ -228,6 +303,7 @@ def wait_child(command, environment, decoration=None):
                 if decoration:
                     try:
                         decoration.heartbeat()
+                        decoration.update_counter()
                     except (OSError, ValueError):
                         pass
     finally:
@@ -252,7 +328,10 @@ def launch(root, executable, arguments):
         if os.ttyname(0) != os.ttyname(descriptor):
             return wait_child(command, environment)
         try:
-            decoration = Decoration(root, session_id(), descriptor)
+            identifier = launch_session(descriptor)
+            codex_home = discover_client_home(executable, arguments)
+            decoration = Decoration(root, identifier, descriptor, client_counter=True,
+                                    codex_home=codex_home)
             decoration.prepare()
         except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
             if decoration is not None:
@@ -264,7 +343,8 @@ def launch(root, executable, arguments):
             decoration = None
         if decoration is not None:
             environment['CODEX_MONITOR_LAUNCH_ACTIVE'] = decoration.token
-            command = [executable] + runtime_overrides(decoration.identifier, decoration.token, root) + arguments
+            command = [executable] + runtime_overrides(decoration.identifier, decoration.token, root,
+                                                       client_counter=True) + arguments
         return wait_child(command, environment, decoration)
     finally:
         try:

@@ -2,16 +2,20 @@
 
 Environment: macOS, Python 3.9.6, Codex CLI/app-server 0.166.0.
 
+The following live GUI observations are historical 0.1.0 evidence. Their
+recorded labels are preserved exactly; they are not new 0.1.1 GUI results.
+The 0.1.1 regression checks are described separately below.
+
 | Check | Result |
 |---|---|
-| Standard-library unit/integration tests | 92 passed, including launcher, lease, restricted API bridge and zsh installer tests |
+| Standard-library unit/integration tests, prior 0.1.0 run | 92 passed, including launcher, lease, restricted API bridge and zsh installer tests |
 | Skill frontmatter validation | Passed |
 | Source installer and installed skill wrapper | Passed |
 | Real owning thread identity over Unix WebSocket | Passed |
 | Real event delivery while the owning thread is active | Passed; external tool output observed and queried in history |
 | Real file event while a test thread is idle | Passed; a new turn id was accepted and external tool output observed |
 | Actual current-thread idle model acknowledgement | Passed; independent idle observation, accepted event turn, and canonical agent acknowledgement in that same thread and turn |
-| Opt-in iTerm2 user-variable publication, current `monitor-N` format | Passed: blank → `monitor-2` → `monitor-1` → blank in the same exact session and thread; title format and service instance unchanged; both test-owned watchers stopped |
+| Opt-in iTerm2 user-variable publication, historical hyphen format | Passed: blank → `monitor-2` → `monitor-1` → blank in the same exact session and thread; title format and service instance unchanged; both test-owned watchers stopped |
 | CLI `statusline --show-zero --json` | Passed; label `monitor-0`, numeric `active: 0`, and `available: true` |
 | Opt-in iTerm2 user-variable publication, original pre-hyphen format | Passed: blank → `monitor2` → `monitor1` → blank in the authorized current single-pane session; title override format remained unchanged |
 | Visible iTerm2 status-bar indicator, original pre-hyphen format | Passed; user confirmed visible `monitor2` in the authorized current shell while two test-owned watchers were active |
@@ -42,13 +46,14 @@ Codex account and are separate from CI.
 The manual iTerm2 integration leaves the official Codex CLI unchanged and publishes only
 the private session variable `user.codexMonitor`. `iterm attach`, `iterm status`,
 and `iterm detach` operate on the explicitly authorized current session. The
-label counts active watchers for the exact thread and normalized `CODEX_HOME`:
-`monitor-N` (for example, `monitor-2` or `monitor-1`), or blank at zero. It does not
+label counts active watchers for the exact thread and normalized `CODEX_HOME`.
+Current labels are `1 monitor`, `2 monitors`, `3 monitors`, and blank at zero.
+It does not
 add a native Codex footer item, alter
 titles or shared profiles, enable a global API, or operate on other shells.
-Both the original pre-hyphen check and the current-format live count check
+Both the original pre-hyphen check and the historical hyphen-format live check
 started from zero, registered two empty-file watchers owned by the tested
-thread, then stopped both. The current-format observations were blank →
+thread, then stopped both. The historical hyphen-format observations were blank →
 `monitor-2` → `monitor-1` → blank. Each observation matched the current
 `user.codexMonitor` value, the title format stayed unchanged, and the monitor
 service instance stayed the same. The variable checks are separate from the
@@ -91,3 +96,28 @@ The shared service instance did not change. No other iTerm2 window or fresh
 interactive Codex TUI was opened; the new-shell function and original command
 forwarding have separate isolated coverage. The report has `passed: true` and
 `real_watch_command_auto_binding: true`.
+
+## 0.1.1 third-party regression follow-up
+
+The third-party review identified cross-terminal and resume risks in relying
+on tool-inherited terminal IDs or waiting for a new `watch`. The replacement
+parent/client count loop starts with the launcher, validates its real terminal
+FD against read-only metadata, and reads native identity only from its owned
+terminal. Its runtime native title includes the leading
+`codex | <thread ID> | codex` markers. Codex 0.166.0's truncated ID prefix is
+resolved only when the active watcher registry supplies exactly one full
+thread ID plus normalized `CODEX_HOME` pair; ambiguity hides the count.
+Existing resumed-thread watchers do not need to be registered again.
+
+The client profile is established through the original CLI entry and an
+initialize response, then used to filter the registry before ID resolution.
+A sole matching watcher in another profile cannot supply this client's count.
+
+Isolated mocked A/B-terminal and resume regression checks were run for this
+change. They exercise stale inherited IDs, client-owned count resolution, and
+existing watcher recovery; they did not change real GUI state or terminal
+bindings. Current output grammar is `1 monitor`, `2 monitors`, `3 monitors`,
+with zero blank. The earlier real 0.1.0 GUI observations above remain historical
+evidence, not a claim that this new client loop has passed a fresh live GUI
+run. The final 0.1.1 standard-library regression run passed all 154 tests,
+including the native transport tests using temporary local Unix sockets.

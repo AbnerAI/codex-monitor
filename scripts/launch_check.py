@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Opt-in API lifecycle check confined to the current authorized iTerm2 shell.
 
-Temporarily removes only this project's counter component, verifies automatic
-addition and exact launch binding, then restores the original current-session
-layout and manual attachment. Never opens another window or Codex conversation.
+Temporarily removes only this project's counter component, verifies layout
+addition and an explicitly confirmed legacy attachment, then restores the
+original current-session layout and manual attachment. This does not verify
+the production parent-managed/native-title counter path. Never opens another
+window or Codex conversation.
 """
 import argparse
 import copy
@@ -32,7 +34,9 @@ def main():
     os.umask(0o077)
     root = Path(args.state_dir).expanduser().resolve()
     identifier, thread, home = session_id(), os.environ['CODEX_THREAD_ID'], home_path()
-    report = {'passed': False, 'scope': 'current authorized shell only'}
+    report = {'passed': False, 'scope': 'current authorized shell only',
+              'verification_mode': 'legacy_explicit_attachment_layout_lifecycle',
+              'production_parent_native_title_verified': False}
     descriptor = None
     original = decoration = old_attachment = test_layout = None
     owned = []
@@ -40,7 +44,7 @@ def main():
     markers = {key: os.environ.get(key) for key in ('CODEX_MONITOR_LAUNCH_TOKEN', 'CODEX_MONITOR_ITERM_SESSION')}
 
     def observe(count):
-        expected = 'monitor-' + str(count) if count else ''
+        expected = (str(count) + (' monitor' if count == 1 else ' monitors')) if count else ''
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             if action('probe', identifier).get('monitor') == expected:
@@ -83,6 +87,10 @@ def main():
             for component in profile_api(identifier, 'get')['layout']['components'])
         os.environ['CODEX_MONITOR_LAUNCH_TOKEN'] = decoration.token
         os.environ['CODEX_MONITOR_ITERM_SESSION'] = identifier
+        binding = attach(root, SimpleNamespace(session=identifier, thread=thread, codex_home=home))
+        if binding.get('attached') is not True or binding.get('managed_by') == 'launch_client':
+            raise RuntimeError('The explicitly confirmed legacy attachment was not established')
+        report['legacy_explicit_attachment'] = True
         with tempfile.TemporaryDirectory(prefix='cm-auto-launch-check-') as directory:
             for index in range(2):
                 inbox = Path(directory) / (str(index) + '.ndjson')
@@ -95,11 +103,11 @@ def main():
                     capture_output=True, text=True, timeout=35, check=True)
                 registration = json.loads(completed.stdout)
                 owned.append(registration['id'])
-                if not registration.get('iterm', {}).get('attached'):
-                    raise RuntimeError('The real watch command did not attach its indicator')
+                if registration.get('armed') is not True or registration.get('thread_id') != thread:
+                    raise RuntimeError('The real watch command did not register its exact owning thread')
             actual = json.loads(attachment_path(root, identifier).read_text())
             report['exact_thread_bound'] = actual['thread_id'] == thread and actual['codex_home'] == home
-            report['real_watch_command_auto_binding'] = True
+            report['real_watch_command_registration'] = True
             report['two_watchers_label'] = observe(baseline + 2)
             for watcher in owned:
                 control(root, {'method': 'unwatch', 'id': watcher})
@@ -112,7 +120,8 @@ def main():
         report['service_instance_unchanged'] = control(root, {'method': 'status'})['instance'] == service['instance']
         report['passed'] = all(report.get(key) for key in (
             'component_added_automatically', 'exact_thread_bound', 'launch_layout_restored',
-            'counter_cleared_on_exit', 'service_instance_unchanged', 'real_watch_command_auto_binding'))
+            'counter_cleared_on_exit', 'service_instance_unchanged',
+            'legacy_explicit_attachment', 'real_watch_command_registration'))
     except Exception as exc:
         report['error'] = str(exc)
     finally:

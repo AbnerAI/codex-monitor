@@ -8,6 +8,7 @@ import threading
 import time
 
 from .websocket import UnixWebSocket
+from . import __version__
 
 
 class RpcError(RuntimeError):
@@ -65,7 +66,7 @@ class CodexRPC:
             self.responses, self.eof = {}, False
             threading.Thread(target=self._read, args=(self.connection,), daemon=True).start()
             self._request('initialize', {
-                'clientInfo': {'name': 'codex-monitor', 'title': 'Codex Monitor', 'version': '0.1.0'},
+                'clientInfo': {'name': 'codex-monitor', 'title': 'Codex Monitor', 'version': __version__},
                 'capabilities': {'experimentalApi': True}}, False)
             self.connection.send({'method': 'initialized'})
 

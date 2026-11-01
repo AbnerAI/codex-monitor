@@ -8,9 +8,9 @@ import time
 import unittest
 from unittest.mock import patch
 
-from codex_monitor.iterm import (attach_for_launch, attachment_path, save,
+from codex_monitor.iterm import (SessionIdentity, attach_for_launch, attachment_path, save,
                                 stop_owned_launch_updater)
-from codex_monitor.launch_state import create_lease, invalidate_lease, launch_lock
+from codex_monitor.launch_state import create_lease, invalidate_lease, launch_lock, lease_path, read_lease
 
 
 SESSION = '11111111-2222-4333-8444-555555555555'
@@ -27,6 +27,7 @@ class AutomaticLaunchBinding(unittest.TestCase):
         self.env = {'CODEX_MONITOR_ITERM_SESSION': 'w0t0p0:' + SESSION,
                     'CODEX_MONITOR_LAUNCH_TOKEN': TOKEN,
                     'CODEX_HOME': str(self.root / 'unrelated-parent-profile')}
+        self.confirmed = SessionIdentity(SESSION, 'explicit', TOKEN)
         with launch_lock(self.root, SESSION):
             create_lease(self.root, SESSION, TOKEN)
 
@@ -89,7 +90,7 @@ class AutomaticLaunchBinding(unittest.TestCase):
 
         def request():
             barrier.wait(timeout=5)
-            return attach_for_launch(self.root, 'actual-thread', self.home)
+            return attach_for_launch(self.root, 'actual-thread', self.home, identity=self.confirmed)
 
         with patch.dict(os.environ, self.env), \
              patch('codex_monitor.iterm.attach', side_effect=attach_once), \
@@ -103,7 +104,31 @@ class AutomaticLaunchBinding(unittest.TestCase):
         action.assert_not_called()
         detach.assert_not_called()
 
-    def test_thread_and_actual_selected_profile_determine_rebinding(self):
+    def test_unconfirmed_scope_changes_have_no_gui_rpc_or_registry_side_effects(self):
+        for old_thread, old_home in (('previous-thread', self.home),
+                                     ('actual-thread', self.env['CODEX_HOME'])):
+            with self.subTest(old_thread=old_thread, old_home=old_home):
+                self.attachment(thread=old_thread, home=old_home)
+                before = attachment_path(self.root, SESSION).read_bytes()
+                with patch.dict(os.environ, self.env), \
+                     patch('codex_monitor.iterm.detach') as detach, \
+                     patch('codex_monitor.iterm.attach') as attach, \
+                     patch('codex_monitor.iterm.action') as action, \
+                     patch('codex_monitor.iterm.CodexRPC') as rpc, \
+                     patch('codex_monitor.iterm.control') as control:
+                    result = attach_for_launch(self.root, 'actual-thread', self.home)
+                self.assertFalse(result['attached'])
+                self.assertEqual(result['reason'], 'explicit_confirmation_required')
+                self.assertEqual(result['context'], 'legacy_client_context')
+                self.assertIn('--session ' + SESSION, result['confirmation_command'])
+                self.assertEqual(attachment_path(self.root, SESSION).read_bytes(), before)
+                detach.assert_not_called()
+                attach.assert_not_called()
+                action.assert_not_called()
+                rpc.assert_not_called()
+                control.assert_not_called()
+
+    def test_explicit_session_confirmation_allows_exact_thread_and_profile_rebinding(self):
         for old_thread, old_home in (('previous-thread', self.home),
                                      ('actual-thread', self.env['CODEX_HOME'])):
             with self.subTest(old_thread=old_thread, old_home=old_home):
@@ -117,7 +142,8 @@ class AutomaticLaunchBinding(unittest.TestCase):
                      patch('codex_monitor.iterm.detach', side_effect=detach_old) as detach, \
                      patch('codex_monitor.iterm.attach', return_value={'attached': True}) as attach, \
                      patch('codex_monitor.iterm.action') as action:
-                    self.assertTrue(attach_for_launch(self.root, 'actual-thread', self.home)['attached'])
+                    result = attach_for_launch(self.root, 'actual-thread', self.home, identity=self.confirmed)
+                    self.assertTrue(result['attached'])
                 detach.assert_called_once_with(self.root, SESSION)
                 args = attach.call_args.args[1]
                 self.assertEqual((args.session, args.thread, args.codex_home, args.launch_token),
@@ -129,10 +155,52 @@ class AutomaticLaunchBinding(unittest.TestCase):
         with patch.dict(os.environ, self.env), \
              patch('codex_monitor.iterm.detach') as detach, \
              patch('codex_monitor.iterm.attach', return_value={'attached': True}) as attach:
-            result = attach_for_launch(self.root, 'actual-thread', self.home)
+            result = attach_for_launch(self.root, 'actual-thread', self.home, identity=self.confirmed)
         self.assertTrue(result['attached'])
         detach.assert_called_once_with(self.root, SESSION)
         self.assertEqual(attach.call_args.args[1].codex_home, self.home)
+
+    def test_inherited_live_legacy_token_cannot_rebind_original_terminal_even_if_it_has_gui_focus(self):
+        for manager in (None, 'watch_worker'):
+            with self.subTest(manager=manager):
+                lease = read_lease(self.root, SESSION)
+                if manager is None:
+                    lease.pop('counter_manager', None)
+                else:
+                    lease['counter_manager'] = manager
+                save(lease_path(self.root, SESSION), lease)
+                self.attachment(thread='original-client-thread')
+                before = attachment_path(self.root, SESSION).read_bytes()
+                inherited = dict(self.env, CODEX_THREAD_ID='different-new-client-thread')
+                with patch.dict(os.environ, inherited), \
+                     patch('codex_monitor.iterm.action', return_value={'session_id': SESSION}) as action, \
+                     patch('codex_monitor.iterm.attach') as attach, \
+                     patch('codex_monitor.iterm.detach') as detach, \
+                     patch('codex_monitor.iterm.CodexRPC') as rpc:
+                    result = attach_for_launch(self.root, 'different-new-client-thread', self.home)
+                self.assertEqual(result['reason'], 'explicit_confirmation_required')
+                self.assertEqual(attachment_path(self.root, SESSION).read_bytes(), before)
+                action.assert_not_called()
+                attach.assert_not_called()
+                detach.assert_not_called()
+                rpc.assert_not_called()
+
+    def test_legacy_first_writer_requires_confirmation_but_matching_binding_is_read_only(self):
+        with patch.dict(os.environ, self.env), \
+             patch('codex_monitor.launch_state.launch_lock', side_effect=AssertionError('read-only path must not lock')), \
+             patch('codex_monitor.iterm.action') as action, \
+             patch('codex_monitor.iterm.attach') as attach:
+            result = attach_for_launch(self.root, 'actual-thread', self.home)
+            self.assertEqual(result['reason'], 'explicit_confirmation_required')
+            self.assertFalse(attachment_path(self.root, SESSION).exists())
+            self.attachment()
+            existing = attachment_path(self.root, SESSION).read_bytes()
+            result = attach_for_launch(self.root, 'actual-thread', self.home)
+            self.assertTrue(result['attached'])
+            self.assertTrue(result['already_attached'])
+        self.assertEqual(attachment_path(self.root, SESSION).read_bytes(), existing)
+        action.assert_not_called()
+        attach.assert_not_called()
 
     def test_old_cleanup_does_not_stop_a_new_owner_or_clear_its_variable(self):
         original = self.attachment(token=NEW_TOKEN)

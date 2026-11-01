@@ -62,7 +62,7 @@ other complete lines deliver their text. Unterminated records wait.
 
 Use terminal integration only when the user requests an iTerm2 indicator. The
 count is scoped to one exact Codex thread and normalized `CODEX_HOME`:
-`monitor-2`, `monitor-1`, or blank at zero. It is an iTerm2 status-bar component,
+`1 monitor`, `2 monitors`, `3 monitors`, or blank at zero. It is an iTerm2 status-bar component,
 not a native Codex footer field.
 
 ### Automatic new Codex shells
@@ -79,27 +79,42 @@ block, `--install` writes it for future shells, and `--uninstall` removes it.
 Do not source/reload existing shells, edit shared profiles, or close/restart
 iTerm2 as part of setup.
 
-When the launcher supplies `CODEX_MONITOR_LAUNCH_TOKEN` and
-`CODEX_MONITOR_ITERM_SESSION`, the `watch` command validates the live private
-lease and can attach the returned watcher to that exact terminal and current
-thread/profile automatically. Let this path perform its checks; never fabricate
-these variables, copy a token from another launch, or guess a thread from cwd,
-title, history, or shared-daemon environment. A failed optional indicator is
-reported separately from an already-registered watcher; do not register a
-duplicate watcher to retry the display.
+In 0.1.1 the launcher owns the automatic count loop from startup/reconnect.
+It proves terminal ownership with its real stdin/stdout TTY and read-only
+iTerm2 metadata, then reads only that exact UUID and publishes through its held
+TTY FD. GUI focus alone and backend environment variables are not ownership
+proof. Counting can continue in its own terminal while another shell has focus.
+
+The launcher changes this Codex invocation's native `tui.terminal_title` format
+to `["app-name","thread-id","app-name","thread-name","project-name"]`.
+Its first three fields must be `codex | <native thread ID> | codex`. Codex
+0.166.0 truncates that ID to 29 characters plus `...`. The launcher resolves
+the client's authoritative `CODEX_HOME` through the original CLI entry, keeping
+its account/home-selection wrapper. It excludes other registry homes before
+requiring a unique full thread match within that exact normalized home. An
+unresolved home or ambiguous/missing identity stays hidden. Do not search
+task/project descriptions for IDs or imitate these fields to force a binding.
+This is a runtime title change in Codex itself, not a configuration-file edit.
+
+Fresh and resumed clients can therefore recover existing watcher counts
+without registering another watcher or requesting a model turn. Cached resume
+environment overrides do not establish ownership. Scoped launch tokens remain
+assistance for explicit manual operations, not proof of the client's home;
+never fabricate them or copy them from another launch. `watch` does not invoke
+automatic attachment: the launcher loop owns display. An indicator failure is separate from an
+already-registered watcher, so do not register a duplicate to retry display.
 
 The launcher preserves existing components, adds the counter only if missing,
 and restores its captured session layout on normal exit if the user has not
 changed it. It skips noninteractive commands such as `exec`, help/version,
 remote/no-daemon launches, non-TTY calls, and non-iTerm2 terminals. It does not
-stop watchers when the display closes. After a `SIGKILL`, clearing may wait for
-the terminal to become current and a blank bar may remain until the next
-Codex launch repairs it. Do not promise immediate cleanup after a hard kill.
+stop watchers when the display closes. After a `SIGKILL`, a counter or blank
+bar may remain until another Codex launch repairs the stale owned state.
+Do not promise immediate cleanup after a hard kill.
 
 ### Manual current-session setup
 
-Without the optional launcher or a valid launcher token, do not invent
-automatic binding. The manual method works with the Python API disabled and
+The manual method works with the Python API disabled and
 does not need the optional client. From the intended Codex conversation, with
 its iTerm2 session current:
 
@@ -107,16 +122,30 @@ its iTerm2 session current:
 codex-monitor iterm attach
 codex-monitor iterm status
 codex-monitor iterm detach
+codex-monitor iterm identify
 ```
 
 The attachment counts active watchers for the exact thread and normalized
-`CODEX_HOME`, publishing `monitor-N` (for example, `monitor-2` or `monitor-1`) to
+`CODEX_HOME`, publishing a count label (`1 monitor`, `2 monitors`, `3 monitors`) to
 `user.codexMonitor`; zero is blank. It
 checks the authorized iTerm2 UUID and single-pane tab. A different current
 session pauses updates; do not enumerate, find, activate, or change other shells.
 `detach` stops only the indicator updater and restores its previous variable.
 After changing Codex thread or profile, detach and attach again using the exact
-new target. Never infer a replacement target from terminal title, cwd, or history.
+new target. Identity precedence is an explicit `--session`, then a valid scoped
+launch lease, then legacy `ITERM_SESSION_ID` only when scoped identity is fully
+absent. Partial, invalid, expired, or mismatched scoped identity must not fall
+back to legacy values. The default manual path honors a valid scoped marker.
+
+`iterm identify` only reports full expected/observed UUIDs, source, and token
+presence; it never reveals tokens or binds the observed terminal. GUI focus is
+not ownership proof. On mismatch, obtain the user's confirmation of the actual
+intended terminal before using an explicit full `--session` UUID. Never infer a
+replacement from descriptive title text, cwd, or history. `undef` is not zero;
+blank can mean zero or intentionally hidden unavailable/ambiguous identity.
+An unconfirmed legacy-environment candidate must not create or rebind an
+attachment without explicit `--session` confirmation, even if GUI focus
+matches. Existing exact matching attachments can be inspected without rebinding.
 
 For a visible indicator, open **Session > Edit Session > Session > Status bar >
 Configure** in the authorized session. Drag **Interpolated String** from the
@@ -134,7 +163,10 @@ automatic `codex` setup needs the separately requested launcher above; a saved/
 dedicated profile is another user-managed choice. Do not perform persistent
 profile changes under authorization limited to the current shell. Without the
 launcher, each new Codex thread still needs an explicit attach using its exact
-identity. Never infer a new target.
+identity. New/resumed clients using an older launcher need an upgrade and new
+launch; do not kill or reload other shells. Check `codex-monitor --version`,
+`whence -w codex`, and `whence -p codex` when the hook appears absent. Never
+infer a new target.
 
 ## Status and limits
 

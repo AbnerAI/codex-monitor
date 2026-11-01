@@ -55,7 +55,7 @@ def parser():
     p.add_argument('--json', action='store_true')
     p = sub.add_parser('iterm', help='Publish a counter variable in the current iTerm2 session')
     iterm = p.add_subparsers(dest='iterm_action', required=True)
-    for name in ('attach', 'status', 'detach', 'api-status'):
+    for name in ('attach', 'status', 'detach', 'api-status', 'identify'):
         item = iterm.add_parser(name)
         item.add_argument('--session', default=None)
         if name == 'attach':
@@ -135,7 +135,7 @@ def execute(args):
             except (OSError, RuntimeError, ValueError):
                 snapshot = {}
         return {'label': read_label(snapshot, args.thread, home_path(args.codex_home), show_zero=args.show_zero),
-                'available': bool(zero_label), 'active': int(zero_label[len('monitor-'):]) if zero_label else None,
+                'available': bool(zero_label), 'active': int(zero_label.split(' ', 1)[0]) if zero_label else None,
                 'thread_id': args.thread, 'codex_home': home_path(args.codex_home)}
     if args.action == 'doctor':
         return doctor(args)
@@ -173,17 +173,9 @@ def execute(args):
         else:
             spec.update(command=args.command, cwd=str(Path(args.cwd).expanduser().resolve()))
         validate_spec(spec)
-        result = control(root, {'method': 'watch', 'spec': spec})
-        try:
-            from .iterm import attach_for_launch
-            indicator = attach_for_launch(root, args.thread, spec['codex_home'])
-            if indicator is not None:
-                result['iterm'] = indicator
-        except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
-            # The watcher is already armed. An optional display failure must
-            # never discard it or start an unreported duplicate watcher.
-            result['iterm'] = {'attached': False, 'error': str(exc)}
-        return result
+        # The launching client owns its display. Tool subprocess environments
+        # may belong to another terminal, including on a resumed thread.
+        return control(root, {'method': 'watch', 'spec': spec})
     request = {'method': {'stop': 'shutdown'}.get(args.action, args.action)}
     for key in ('id', 'content', 'event_id'):
         if hasattr(args, key):
@@ -206,6 +198,9 @@ def main():
         else:
             print(json.dumps(result, ensure_ascii=False, indent=2))
     except (OSError, ValueError, RpcError, RuntimeError) as exc:
-        print(json.dumps({'error': str(exc)}, ensure_ascii=False), file=sys.stderr)
+        error = {'error': str(exc)}
+        if isinstance(getattr(exc, 'details', None), dict):
+            error.update(exc.details)
+        print(json.dumps(error, ensure_ascii=False), file=sys.stderr)
         raise SystemExit(1)
 

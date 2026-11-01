@@ -44,7 +44,7 @@ def main():
 
     def observe(expected):
         deadline = time.monotonic() + 10
-        label = 'monitor-' + str(expected) if expected else ''
+        label = (str(expected) + (' monitor' if expected == 1 else ' monitors')) if expected else ''
         while time.monotonic() < deadline:
             metadata = action('probe', identifier)
             if metadata['title_format'] != before['title_format']:

@@ -3,12 +3,33 @@ from pathlib import Path
 import stat
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
-from codex_monitor.statusline import active_count, build_snapshot, read_label, write_snapshot
+from codex_monitor.statusline import active_count, build_snapshot, format_count, read_label, write_snapshot
 
 
 class StatusLine(unittest.TestCase):
+    def test_count_labels_use_singular_plural_and_hide_zero(self):
+        self.assertEqual([format_count(n) for n in range(4)],
+                         ['', '1 monitor', '2 monitors', '3 monitors'])
+        self.assertEqual(format_count(0, show_zero=True), '0 monitors')
+
+    def test_cli_json_retains_numeric_count_with_plural_display_text(self):
+        from codex_monitor.cli import execute
+        args = SimpleNamespace(action='statusline', state_dir=str(self.root), thread='current',
+                               codex_home=str(self.home), show_zero=False)
+        for count in range(4):
+            with self.subTest(count=count):
+                watchers = [self.watcher('current', self.home, True) for _ in range(count)]
+                write_snapshot(self.root, watchers)
+                with patch('codex_monitor.cli.control') as control:
+                    result = execute(args)
+                control.assert_not_called()
+                self.assertEqual(result['active'], count)
+                self.assertEqual(result['label'], format_count(count))
+                self.assertTrue(result['available'])
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='cm-statusline-test-')
         self.root = Path(self.temp.name).resolve()
@@ -45,7 +66,7 @@ class StatusLine(unittest.TestCase):
         snapshot = build_snapshot(watchers, now=1000)
         self.assertEqual(snapshot['counts'], [
             {'thread_id': 'current', 'codex_home': str(self.home), 'active': 2}])
-        self.assertEqual(read_label(snapshot, 'current', alias, now=1001), 'monitor-2')
+        self.assertEqual(read_label(snapshot, 'current', alias, now=1001), '2 monitors')
 
     def test_home_expansion_matches_the_same_profile(self):
         home = Path.home().resolve()
@@ -78,12 +99,12 @@ class StatusLine(unittest.TestCase):
 
     def test_labels_require_exact_scope_and_show_zero_only_for_healthy_state(self):
         snapshot = build_snapshot(self.watchers, now=1000)
-        self.assertEqual(read_label(snapshot, 'current', self.home, now=1002), 'monitor-2')
+        self.assertEqual(read_label(snapshot, 'current', self.home, now=1002), '2 monitors')
         self.assertEqual(read_label(snapshot, 'missing', self.home, now=1002), '')
         self.assertEqual(read_label(snapshot, 'missing', self.home,
-                                    now=1002, show_zero=True), 'monitor-0')
+                                    now=1002, show_zero=True), '0 monitors')
         self.assertEqual(read_label(snapshot, 'current', self.root / 'absent', now=1002), '')
-        self.assertEqual(read_label(snapshot, 'current', self.home, now=1005), 'monitor-2')
+        self.assertEqual(read_label(snapshot, 'current', self.home, now=1005), '2 monitors')
 
     def test_stale_future_and_shutdown_snapshots_hide_counts_even_with_show_zero(self):
         live = build_snapshot(self.watchers, now=1000)
@@ -121,7 +142,7 @@ class StatusLine(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
         snapshot = json.loads(target.read_text())
         self.assertEqual(snapshot, build_snapshot(self.watchers, now=1000.25))
-        self.assertEqual(read_label(snapshot, 'current', self.home, now=1001), 'monitor-2')
+        self.assertEqual(read_label(snapshot, 'current', self.home, now=1001), '2 monitors')
         self.assertEqual(list(directory.glob('.statusline-*.tmp')), [])
         write_snapshot(directory, self.watchers, running=False, now=1001)
         self.assertEqual(read_label(json.loads(target.read_text()), 'current', self.home,

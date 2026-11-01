@@ -44,6 +44,25 @@ def read_lease(root, identifier):
         return None
 
 
+def lease_summary(root, identifier):
+    """Read existing ownership/counter diagnostics without disclosing its nonce."""
+    try:
+        info = Path(root).stat()
+        if info.st_uid != os.getuid() or info.st_mode & 0o077:
+            return None
+    except OSError:
+        return None
+    value = read_lease(root, identifier)
+    if value is None:
+        return None
+    counter = value.get('counter')
+    return {'session_id': identifier, 'active': valid_lease(root, identifier, value.get('token')),
+            'counter_manager': value.get('counter_manager', 'watch_worker'),
+            'counter': {key: counter.get(key) for key in (
+                'state', 'thread_id', 'codex_home', 'active', 'label', 'native_prefix')}
+                if isinstance(counter, dict) else None}
+
+
 def valid_lease(root, identifier, token, now=None):
     if not isinstance(token, str) or len(token) != 32:
         return False

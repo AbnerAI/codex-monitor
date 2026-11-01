@@ -65,6 +65,24 @@ class ItermProfileApi(unittest.TestCase):
         api.rpc.async_get_profile.assert_not_awaited()
         api.rpc.async_set_profile_properties_json.assert_not_awaited()
 
+    def test_identity_reads_only_explicit_session_native_metadata(self):
+        api, connection = fake_api()
+        native = 'codex | 11111111-2222-4333-8444-55555... | codex | Task'
+        api.rpc.async_variable.return_value = response('variable_response', values=[json.dumps(native)])
+        result = bridge.handle_request({'action': 'identity', 'session_id': SESSION}, api)
+        self.assertEqual(result, {'ok': True, 'result': {'native_title': native}})
+        api.rpc.async_variable.assert_awaited_once_with(
+            connection, session_id=SESSION, gets=['session.autoNameFormat'])
+        api.rpc.async_get_profile.assert_not_awaited()
+        api.rpc.async_set_profile_properties_json.assert_not_awaited()
+
+    def test_identity_rejects_unexpected_metadata_without_writing(self):
+        for values in ([], ['{}'], ['1'], ['"one"', '"two"']):
+            api, connection = fake_api()
+            api.rpc.async_variable.return_value = response('variable_response', values=values)
+            self.assertFalse(bridge.handle_request({'action': 'identity', 'session_id': SESSION}, api)['ok'])
+            api.rpc.async_set_profile_properties_json.assert_not_awaited()
+
     def test_invalid_targets_properties_and_types_never_connect(self):
         api, _ = fake_api()
         invalid = [
