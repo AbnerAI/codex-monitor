@@ -53,7 +53,54 @@ The watcher service uses only the standard library. Automatic iTerm2 display
 setup has a separate, optional Python client. No Claude Code installation or
 binary patch is involved.
 
-## What's new in 0.1.1
+## What's new in 0.1.3
+
+The launcher now forwards the original Codex arguments unchanged. Earlier
+launchers injected `-c` environment/title settings; on Codex 0.166.0 those
+settings could exclude the shared daemon and start an in-process thread.
+A visible counter or a readable history record did not prove that the monitor
+could deliver to that thread. Release 0.1.3 removes every injected `-c` flag.
+
+Automatic display now needs an explicit one-time native title configuration:
+preview `codex-monitor iterm configure-title --codex-home /ACTUAL/HOME`, then
+add `--apply` when ready. Only `tui.terminal_title` is written through Codex's
+official configuration API with a version check, for subsequent CLI launches.
+The selected shared daemon must already be running. See [automatic setup](#automatic-setup-for-new-codex-shells).
+
+`doctor` now checks runtime loading as well as history identity. New watchers
+are rejected before registration if the exact thread is unloaded, unverified,
+unsupported for direct input, or in a system-error state. Approval/input waits
+remain temporary pending states. Green counters from 0.1.2 are preserved.
+
+All 183 isolated regression tests passed. Live `doctor` and read-only title
+configuration preview passed against Codex 0.166.0. A real CLI in a private PTY
+verified shared-runtime routing, notification acceptance, and a canonical agent
+acknowledgement in a rerun with user-task warmup, observed idle state, and a
+larger bounded deadline. iTerm2
+interactions were mocked; delivery used `CodexRPC.deliver` directly. The earlier
+empty-fixture attempt timed out after 90 seconds and remains a failed attempt.
+Actual iTerm2 GUI, persisted title setup, and the live watcher-worker path were
+not verified by this check. See [validation details](docs/validation.md).
+
+## What's new in 0.1.2 (historical)
+
+Automatic iTerm2 counters now default to green text (`#00CC66`). On the next
+eligible Codex launch after upgrading, newly added counters and existing
+counters with no explicit text color use green. Explicit custom colors are
+preserved, and the original session layout is restored on normal exit.
+Already-running terminals are not changed by installing this update.
+
+All 155 regression tests passed; the new color has not been visually verified
+in a live terminal during this release's checks.
+
+This uses the native component's Text Color setting, not ANSI escapes in the
+counter value. Manual components can use **Configure Component > Text Color**.
+See iTerm2's [text component implementation](https://raw.githubusercontent.com/gnachman/iTerm2/master/sources/StatusBar/Components/iTermStatusBarTextComponent.m).
+
+## What's new in 0.1.1 (historical)
+
+The runtime `-c` title/environment setup from this release is superseded by
+0.1.3 because it could change the Codex backend selection.
 
 - Automatic iTerm2 counting now belongs to the launching Codex client. New and
   resumed clients can display existing active watchers without creating another
@@ -66,17 +113,18 @@ binary patch is involved.
   terminal title includes thread-ID markers to support that check.
 - Labels are now `1 monitor`, `2 monitors`, `3 monitors`, and blank at zero.
 
-**A matching 0.1.1 version does not mean automatic display is configured.**
+**A matching release version does not mean automatic display is configured.**
 The core installer installs the service, CLI, and skill. Automatic display also
 needs the separate iTerm2 Python runtime, iTerm2's Python API enabled once, and
-the managed zsh startup block. These are separate setup steps.
+the managed zsh startup block, and the one-time native title configuration.
+These are separate setup steps.
 
 | Your starting point | Follow this path |
 |---|---|
 | First installation | [Fresh installation](#fresh-installation), then [automatic iTerm2 setup](#automatic-setup-for-new-codex-shells) if you want the counter |
-| Older codex-monitor installation | [Upgrade to 0.1.1](#upgrade-to-011); check each display prerequisite rather than the version alone |
+| Older codex-monitor installation | [Upgrade to 0.1.3](#upgrade-to-013); check each display prerequisite rather than the version alone |
 
-Release validation: 154 isolated regression tests and a fresh offline archive
+Historical 0.1.1 validation: 154 isolated regression tests and a fresh offline archive
 installation passed. The new 0.1.1 automatic display path has not yet had a fresh
 live iTerm2 acceptance run; earlier live results are historical 0.1.0 evidence.
 See [validation details](docs/validation.md).
@@ -116,7 +164,7 @@ Use `--start` to start the monitor after installation. Custom destinations:
 Restart/open a Codex session if its skill catalog does not refresh automatically.
 
 This completes the **core installation only**. For automatic `1 monitor`
-display, also complete all three steps under
+display, also complete all steps under
 [automatic iTerm2 setup](#automatic-setup-for-new-codex-shells). The core installer
 does not install the optional SDK, enable iTerm2's API, or edit `~/.zshrc`.
 
@@ -125,9 +173,9 @@ To run without installing anything, substitute `python3 -m codex_monitor` for
 service CLI only; use the source installer or copy `skills/codex-monitor` to your
 Codex skill directory when you also want the skill.
 
-## Upgrade to 0.1.1
+## Upgrade to 0.1.3
 
-Download the 0.1.1 source release, or update your existing checkout, then run
+Download the 0.1.3 source release, or update your existing checkout, then run
 from that source directory:
 
 ```bash
@@ -143,10 +191,16 @@ If you want automatic iTerm2 counting, check the following separately:
 
 | Component | Upgrade action |
 |---|---|
-| Core service, CLI, and skill | Reinstall from the new source as above; verify `0.1.1` |
+| Core service, CLI, and skill | Reinstall from the new source as above; verify `0.1.3` |
 | Optional Python runtime with `iterm2` | Reuse a working runtime; if absent, create it and install the SDK using step 2 of [automatic setup](#automatic-setup-for-new-codex-shells) |
 | iTerm2 Python API | Keep it enabled if already configured; otherwise enable it once using step 1 |
 | Managed `~/.zshrc` block | Run `python3 scripts/install_iterm.py` to preview, then `python3 scripts/install_iterm.py --install` to add or refresh it; existing custom `codex` functions/aliases require integration as described below |
+| Native Codex title identity | Preview `codex-monitor iterm configure-title --codex-home /ACTUAL/HOME`; explicitly add `--apply` for the one-time setup described below |
+
+The new CLI preflight also protects registrations sent to an older running
+monitor service. Existing watchers receive the new backend delivery guard only
+after that service has been upgraded and restarted. Plan that restart with the
+owners of its watchers; installation does not restart it or other sessions.
 
 When ready, open a new interactive zsh shell and enter `codex` normally. An
 already-running Codex client does not acquire the new launcher's behavior from
@@ -178,6 +232,15 @@ codex-monitor doctor
 codex-monitor start
 codex-monitor watch --file /tmp/codex-inbox.ndjson --name inbox
 ```
+
+Check `doctor.registration_ready` before registration. Its `runtime_loaded`,
+`delivery_ready`, and `delivery_state` fields distinguish a loaded runtime from
+shared on-disk history. `doctor` prints structured JSON and exits with code 2
+when `registration_ready` is false, including a history-only match.
+`registration_ready: true` with
+`delivery_state: waiting_for_approval_or_input` permits registration while
+delivery waits. An unloaded or unverified target must be opened normally in
+its owning shared-daemon CLI; the monitor does not resume it automatically.
 
 From another terminal, append a complete record:
 
@@ -255,6 +318,22 @@ Install the service and skill first with `python3 scripts/install.py`. Then:
    python3 scripts/install_iterm.py --install
    ```
 
+4. With the intended Codex shared daemon already running, preview the native
+   title setting for its exact home, then explicitly apply it:
+
+   ```bash
+   codex-monitor iterm configure-title --codex-home /ACTUAL/HOME
+   codex-monitor iterm configure-title --codex-home /ACTUAL/HOME --apply
+   ```
+
+   The first command is read-only. `--apply` writes only `tui.terminal_title`
+   through the official configuration API with a version check. This persisted
+   setting applies to subsequent Codex launches using that home and makes the
+   native title begin `codex | <native thread ID> | codex`. It is not an iTerm2
+   shared-profile change. If the daemon or writable configuration layer is
+   unavailable, setup fails clearly; use Codex's own native title picker or
+   edit that home's configuration manually rather than forcing a write.
+
 From the intended current iTerm2 shell, check the optional API connection:
 
 ```bash
@@ -297,12 +376,14 @@ or GUI focus alone does not establish ownership. It then reads identity only
 from that exact terminal and publishes the count through its held TTY FD.
 Counting continues for that owned terminal when focus moves elsewhere.
 
-For this run only, it passes the native Codex setting
+The one-time setup persists the native Codex setting
 `tui.terminal_title=["app-name","thread-id","app-name","thread-name","project-name"]`.
-This **changes Codex's own terminal title** to include the first three fields
-`codex | <native thread ID> | codex`; it does not edit a Codex configuration
-file or a shared iTerm2 profile. Descriptive title fields are not searched for
-an ID. Codex 0.166.0 truncates the native thread ID to 29 characters plus `...`.
+This **changes Codex's own terminal title** on subsequent launches. The launcher
+does not inject this or any other `-c` setting, add `--remote`, or change profile,
+model, authentication, or permission choices. Its lease state stays in the
+parent launcher rather than being injected into Codex tool environments.
+Descriptive title fields are not searched for an ID. Codex 0.166.0 truncates the
+native thread ID to 29 characters plus `...`.
 The launcher resolves the client's authoritative `CODEX_HOME` through the
 original CLI entry, preserving its account-selection wrapper. Registry entries
 from other homes are excluded. Within that exact normalized home, the native
@@ -310,17 +391,20 @@ field must match exactly one full thread ID. An unresolved home or missing,
 malformed, or ambiguous identity hides the count rather than guessing.
 
 Home resolution uses the original CLI's daemon-version lookup to select the
-endpoint, then reads the authoritative `codexHome` from `initialize`. On a cold
-launch with no daemon, it uses a bounded temporary stdio app-server for that
-initialization and cleans it up. This does not start a daemon, thread, turn, or
-model request, and does not change configuration.
+endpoint, then reads authoritative `codexHome` from `initialize`. A cold home
+probe may use a bounded temporary stdio app-server for initialization only and
+clean it up before the real client launches. That probe creates no thread or
+turn and is never a notification endpoint or a substitute for runtime loading.
+The monitor does not start another backend or resume a thread to make an
+in-process target deliverable. Readiness is checked against the actual shared
+runtime after the real CLI starts.
 
 The loop checks the owned terminal and registry on each tick, so resuming an
 existing thread restores its registered watcher count without registering a
 new watcher or making a model request. It does not depend on a shared
 app-server's environment or on environment overrides cached by a resumed
-thread. Scoped tokens remain assistance for explicit manual operations, not a
-substitute for the authoritative client home. The `watch` command does not
+thread. Parent launch leases do not replace the authoritative client home.
+The `watch` command does not
 automatically attach an indicator; the launcher loop owns its lifecycle.
 An optional indicator failure does not discard an already-registered watcher.
 
@@ -352,7 +436,7 @@ the original layout. That check did not open another iTerm2 window or start a
 fresh interactive Codex TUI. The core service and manual indicator remain
 usable while the Python API is disabled; see [validation notes](docs/validation.md).
 
-### Upgrading to 0.1.1 and checking identity
+### Checking identity after upgrading
 
 **Automatic launches do not require per-shell UUID confirmation.** The launcher
 checks its actual terminal FD and owns the display. Agents must not run manual
@@ -459,7 +543,9 @@ user instruction. Model, cwd, permission and approval settings are not overridde
 
 Threads waiting for approval/user input, unloaded threads, and server outages
 retain pending events. Reopen an unloaded thread in its owning CLI. The service
-does not approve requests or restore a thread behind the user's back.
+does not approve requests or restore a thread behind the user's back. Existing
+watchers that later unload keep their pending events without a TTL or automatic
+drop; this differs from rejecting an unavailable target during new registration.
 
 ## Reliability and limits
 
@@ -505,13 +591,14 @@ the same state directory; a file lock prevents duplicate ownership.
 | Socket denied | Use your host's normal approval flow; do not bypass its sandbox. |
 | Socket missing | Open the owning Codex CLI with its shared daemon enabled. |
 | Events remain pending | Inspect `list.last_error` and the target's input/approval state. |
-| Unsupported `toolOutput` | Check your CLI/server protocol; `doctor` is connection-only. |
+| History is readable but the target is unloaded | Check `doctor.runtime_loaded`, `registration_ready`, and `delivery_state`; open the exact owning CLI with its shared daemon. Do not force a resume or register against an in-process thread. |
+| Unsupported `toolOutput` | Check your CLI/server protocol and readiness output; only a real accepted event and model response verify end-to-end delivery. |
 | Startup failure | Inspect `~/.codex-monitor/startup.log`; check state path permissions/length. |
 | Automatic iTerm2 indicator unavailable | In the intended current single-pane shell, run `codex-monitor iterm api-status`; check the Python API checkbox and optional client runtime. Keep default authentication; do not enable an allow-all-applications setting. |
 | New shell still uses an unwrapped `codex` | Check PATH with `whence -p codex` and the active definition with `whence -w codex`; existing aliases/functions are deliberately preserved. The managed block loads in new interactive zsh shells, without reloading running shells. |
 | Counter is blank or `undef` | Blank can mean zero, unavailable, or deliberately hidden ambiguous identity; `undef` is not zero. Run `iterm identify` and `iterm status`. Unsupported remote/non-TTY/multi-pane launches skip display setup. |
 | Identity mismatch | Compare full expected/observed UUIDs from `iterm identify`. GUI focus alone is not ownership proof; use `--session` only after user confirmation, never a different shell's environment. |
-| New/resumed Codex count is missing | Upgrade the CLI and refresh the zsh hook, inspect `whence -w codex` / `whence -p codex`, then launch Codex anew. The loop resolves native identity against active watcher scopes without requiring a new watcher. |
+| New/resumed Codex count is missing | Upgrade to 0.1.3, refresh the hook, complete the one-time `iterm configure-title` setup for the actual home, then launch Codex anew. Inspect `whence -w codex` / `whence -p codex` in its interactive shell. |
 
 To uninstall, stop/unwatch first. The paths listed in the install table belong
 to this tool; move those artifacts aside. Keep `~/.codex-monitor/` if you want
@@ -527,6 +614,24 @@ python3 scripts/package.py
 Unit tests use only local fixtures; no model/account/network is needed. Some
 agent sandboxes require permission to bind the tests' temporary Unix sockets.
 GitHub Actions runs tests on macOS/Linux and Python 3.9/3.12/3.13.
+
+For an opt-in real CLI routing and delivery check:
+
+```bash
+python3 scripts/routing_check.py --run --deliver \
+  --codex-home /ACTUAL/HOME --codex-bin /ORIGINAL/CODEX \
+  --cwd /TRUSTED/WORKSPACE --timeout 300 --output /PRIVATE/REPORT.json
+```
+
+`--run` launches the official CLI through the production launcher in a private
+PTY, using only its own exact fixture thread. It verifies that the initially
+unloaded fixture becomes loaded in the same shared backend; it never guesses
+the latest thread. iTerm2 GUI, identity, and home lookups are mocked, so this
+does not verify visible rendering or apply native title configuration.
+Without `--deliver`, the check submits no model turn. Explicit `--deliver`
+creates real model turn(s) on the selected account and checks acknowledgement;
+accepted transport output alone is not a verified model reply. Cleanup targets
+only the fixture. See the separate results in [validation.md](docs/validation.md).
 
 Live tests are opt-in and use the current Codex account:
 
@@ -571,7 +676,7 @@ The model-backed full test requires working inference connectivity; a successful
 local WebSocket handshake alone is insufficient.
 
 Upload this repository to your own GitHub repository; no remote is preconfigured.
-The packaging script creates `dist/codex-monitor-0.1.1.zip` and
+The packaging script creates `dist/codex-monitor-0.1.3.zip` and
 `dist/codex-monitor.skill`. Extract the latter as a skill folder; it still needs
 the independently installed service. Personal paths and runtime/account data
 are excluded from these release archives.

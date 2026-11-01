@@ -30,10 +30,13 @@ class WatchDisplayOwnership(unittest.TestCase):
             with patch.dict(os.environ, inherited), \
                  patch('codex_monitor.cli.validate_spec') as validate, \
                  patch('codex_monitor.cli.codex_binary', return_value='/original/codex'), \
+                 patch('codex_monitor.cli.CodexRPC') as rpc_factory, \
                  patch('codex_monitor.cli.control', return_value=registered) as control, \
                  patch('codex_monitor.iterm.attach_for_launch') as automatic_binding, \
                  patch('codex_monitor.iterm.action') as gui, \
                  patch('codex_monitor.iterm.detach') as detach:
+                rpc_factory.return_value.readiness.return_value = {
+                    'registration_ready': True, 'delivery_ready': True, 'delivery_state': 'ready'}
                 args = cli.parser().parse_args([
                     '--state-dir', str(root), 'watch', '--file', str(root / 'inbox.ndjson'),
                     '--thread', current_thread, '--codex-home', str(profile)])

@@ -44,7 +44,47 @@ skill 通过 CLI 控制常驻监听。监听线程将读取位置与新增事件
 再通过已有 app-server 投递到原 Codex 会话；等待用户输入或审批时，事件继续暂存。
 可选的 iTerm2 分支只显示该会话的活跃监听数，与事件投递流程独立。
 
-## 0.1.1 升级了什么
+## 0.1.3 升级了什么
+
+启动器现在原样转交用户的 Codex 参数，不再注入任何 `-c` 设置。此前注入的环境和
+标题设置会让 Codex 0.166.0 排除共享 daemon，改用进程内线程；计数可见或历史可读，
+都不能证明 monitor 能向该线程投递。0.1.3 修复了这一后端选择问题。
+
+自动显示改为一次明确的持久化标题配置：先运行
+`codex-monitor iterm configure-title --codex-home /ACTUAL/HOME` 只读预览，再在确认设置时
+加 `--apply`。它通过官方配置 API 和版本检查，只写入 `tui.terminal_title`，对后续
+使用该 home 的 Codex 启动生效。配置命令要求对应的共享 daemon 已运行。
+
+`doctor` 会同时核验运行时加载状态和历史身份。新 watcher 在登记前会拒绝未加载、
+无法核实、不支持直接输入或处于系统错误状态的线程；等待审批或输入仍属可暂存的
+临时状态。`doctor` 输出结构化 JSON；`registration_ready` 为 false 时退出码为 2，
+只有历史匹配也不算成功。等待审批/输入但仍可登记时保持成功退出。0.1.2 的绿色计数保留。
+
+0.1.3 的 183 项隔离回归测试通过；真实 Codex 0.166.0 上的 `doctor` 和标题配置
+只读预览通过。私有 PTY 中的真实 CLI 重试使用了用户任务预热和更长的有界等待，
+确认空闲后，验证了共享运行时归属、通知接受，以及对应通知回合中的规范 agent
+确认回复。iTerm2 交互使用
+mock，投递直接调用 `CodexRPC.deliver`。此前空任务测试在 90 秒后超时，仍保留为
+失败尝试，不能据此单独归因于任务上下文或等待时间。本次未验证真实 iTerm2 GUI、
+持久化标题配置或 live watcher-worker 路径。详见
+[验收记录](docs/validation.md)。
+
+## 0.1.2 升级了什么（历史记录）
+
+自动显示的计数默认使用绿色文字（`#00CC66`）。升级后，下次通过启动器打开符合条件的
+Codex 时，新添加的计数组件，以及尚未明确设置文字颜色的旧计数组件，都会使用绿色。
+已经明确设置过的自定义颜色会保留；正常退出时仍恢复原有终端布局。
+安装更新不会改变已经运行的终端。
+
+155 项回归测试通过；本次未在真实终端进行新颜色的可见性验收。
+
+颜色使用 iTerm2 组件原生的 Text Color 设置，不往计数文本中插入 ANSI 转义符。
+手动添加的组件可以在 **Configure Component > Text Color** 中选择绿色。
+
+## 0.1.1 升级了什么（历史记录）
+
+这一版本通过运行时 `-c` 注入标题和环境的做法已被 0.1.3 取代，因为它会影响
+Codex 的共享 daemon 选择。
 
 - 自动计数改由启动 Codex 的客户端持续更新。新开或恢复会话时，可以恢复已有活跃
   监听的计数，无需新建监听，也不必等模型执行一次命令。
@@ -54,16 +94,16 @@ skill 通过 CLI 控制常驻监听。监听线程将读取位置与新增事件
   为此，本次 Codex 运行的原生终端标题会包含 thread ID 标记。
 - 显示统一为 `1 monitor`、`2 monitors`、`3 monitors`，零个留空。
 
-**程序版本是 0.1.1，不等于自动显示已配置完成。** 核心安装器只安装服务、CLI 和
+**程序版本匹配，不等于自动显示已配置完成。** 核心安装器只安装服务、CLI 和
 skill；自动显示还需要独立的 iTerm2 Python 运行环境、开启一次 iTerm2 Python API，
-以及 `.zshrc` 中的受管启动代码。这几项需要分别配置。
+`.zshrc` 中的受管启动代码，以及一次原生标题配置。这几项需要分别配置。
 
 | 你的情况 | 安装路径 |
 |---|---|
 | 从未安装过 | 先按下方“全新安装”操作；需要计数时，再完成“新 Codex shell 自动启用”的全部步骤 |
-| 已安装旧版本 | 按下方“从旧版本升级到 0.1.1”操作；逐项检查显示依赖，不要只检查版本号 |
+| 已安装旧版本 | 按下方“从旧版本升级到 0.1.3”操作；逐项检查显示依赖，不要只检查版本号 |
 
-本次已通过 154 项隔离回归测试和全新目录中的发布包离线安装检查。新版自动显示
+0.1.1 当时已通过 154 项隔离回归测试和全新目录中的发布包离线安装检查。其自动显示
 尚未进行新的真实 iTerm2 验收；之前的真实终端结果属于 0.1.0 的历史证据。
 详见[验收记录](docs/validation.md)。
 
@@ -84,12 +124,12 @@ python3 scripts/install.py
 若 Codex 的技能目录没有自动刷新，重新打开会话。确保 `~/.local/bin` 在 PATH 中。
 
 到这里完成的是**核心安装**。需要自动显示 `1 monitor` 时，还必须完成下方
-“新 Codex shell 自动启用”的全部三步。核心安装器不会安装可选 SDK、开启 iTerm2
+“新 Codex shell 自动启用”的全部步骤。核心安装器不会安装可选 SDK、开启 iTerm2
 的 API，也不会写入 `~/.zshrc`。
 
-## 从旧版本升级到 0.1.1
+## 从旧版本升级到 0.1.3
 
-下载 0.1.1 源码包，或更新已有源码目录，然后在新源码根目录执行：
+下载 0.1.3 源码包，或更新已有源码目录，然后在新源码根目录执行：
 
 ```bash
 python3 scripts/install.py
@@ -103,10 +143,15 @@ codex-monitor --version
 
 | 组件 | 升级时怎么处理 |
 |---|---|
-| 核心服务、CLI、skill | 按上述命令重装，确认版本为 `0.1.1` |
+| 核心服务、CLI、skill | 按上述命令重装，确认版本为 `0.1.3` |
 | 带 `iterm2` SDK 的独立 Python 环境 | 已有且可用则复用；没有则按下方自动启用的第 2 步创建并安装 |
 | iTerm2 Python API | 已开启则保留；未开启则按第 1 步手动开启一次 |
 | `~/.zshrc` 受管启动代码 | 运行 `python3 scripts/install_iterm.py` 预览，再用 `python3 scripts/install_iterm.py --install` 添加或刷新；已有自定义 `codex` 函数或别名时，按下方说明接入 |
+| Codex 原生标题身份字段 | 运行 `codex-monitor iterm configure-title --codex-home /ACTUAL/HOME` 预览，再明确加 `--apply` 完成下方的一次配置 |
+
+新 CLI 的登记前检查也能保护仍连接旧 monitor 服务的新登记。已经存在的 watcher
+要使用新版后端投递检查，仍需升级并按计划重启服务；应先与使用这些监听的任务协调。
+安装器不会自动重启共享服务，也不应为升级而擅自停止其他 watcher 或会话。
 
 准备好后，自行打开一个新的交互式 zsh shell，照常输入 `codex`。单纯覆盖程序文件
 不会让已经运行的 Codex 客户端获得新启动逻辑。无需关闭或重新加载其他 shell，
@@ -184,6 +229,19 @@ Claude Code 配置，也不重新加载已有 shell，不关闭或重启 iTerm2�
    python3 scripts/install_iterm.py --install
    ```
 
+4. 对应 Codex 共享 daemon 已运行时，为实际 home 预览并明确应用原生标题设置：
+
+   ```bash
+   codex-monitor iterm configure-title --codex-home /ACTUAL/HOME
+   codex-monitor iterm configure-title --codex-home /ACTUAL/HOME --apply
+   ```
+
+   第一条命令只读。`--apply` 通过官方配置 API 和版本检查，只持久化
+   `tui.terminal_title`，供后续使用该 home 的 Codex 启动读取。原生标题将以
+   `codex | <原生 thread ID> | codex` 开头；这不是共享 iTerm2 profile 的修改。
+   daemon 或可写配置层缺失时会明确失败；可使用 Codex 自己的原生标题选择器，
+   或手动编辑该 home 的配置，不强行创建或覆盖配置层。
+
 在准备使用的当前 iTerm2 shell 中，可以先做只读检查：
 
 ```bash
@@ -214,11 +272,13 @@ shell 并照常输入 `codex`，每个新的 Codex shell 都不必再手动添�
 缓存环境变量或 GUI 当前焦点本身都不是归属证据。之后只读取该精确终端，并通过
 已经持有的 TTY FD 发布计数；焦点切到其他终端后，仍可更新自己终端的计数。
 
-启动器仅为本次运行传入 Codex 原生设置
+一次配置会持久化 Codex 原生设置
 `tui.terminal_title=["app-name","thread-id","app-name","thread-name","project-name"]`，
-因此**本次 Codex 自身的终端标题会改变**：前三个字段为
-`codex | <原生 thread ID> | codex`。这不修改 Codex 配置文件或共享 iTerm2 profile，
-也不会从后面的任务名、项目名等描述字段里搜索 ID。Codex 0.166.0 会将原生 ID
+因此**后续 Codex 自身的终端标题会改变**：前三个字段为
+`codex | <原生 thread ID> | codex`。启动器不再注入任何 `-c` 设置，也不添加
+`--remote` 或改变 profile、模型、认证、权限选择；租约状态只留在父启动器侧，
+不会注入 Codex 工具环境。不会从任务名、项目名等描述字段里搜索 ID。
+Codex 0.166.0 会将原生 ID
 截为前 29 个字符加 `...`。启动器通过原 CLI 入口解析客户端实际的 `CODEX_HOME`，
 保留原账号切换包装器的选择；先排除其他 home 的注册记录，再要求原生 ID 在该
 精确、规范化 home 内恰好匹配一个完整 thread ID。home 无法确定、身份缺失、
@@ -226,12 +286,14 @@ shell 并照常输入 `codex`，每个新的 Codex shell 都不必再手动添�
 
 home 解析先通过原 CLI 的 daemon-version 查询选择端点，再从 `initialize` 读取
 权威 `codexHome`。冷启动尚无 daemon 时，会使用一个限时的临时 stdio app-server
-完成初始化后清理；不会启动 daemon、thread、turn 或模型请求，也不修改配置。
+只做初始化，并在实际客户端启动前清理。该探测不创建 thread、turn 或模型请求，
+绝不作为通知端点，也不证明实际线程已加载。不会另开后端或恢复线程来修补进程内
+执行；真实 CLI 启动后，投递就绪检查仍针对实际共享运行时。
 
 循环每次都核对自有终端的原生身份和监听注册表，恢复旧会话时也能显示原有监听数，
 无需重新登记监听或发起模型请求。它不依赖共享 app-server 的旧环境，也不依赖
-resume 会话缓存的环境覆盖值。运行时 token 仍辅助明确的手动操作，但不能替代
-客户端实际 home 的归属证据。`watch` 不再自动绑定计数器，显示生命周期由启动器
+resume 会话缓存的环境覆盖值。父启动器租约不能替代客户端实际 home 的归属证据。
+`watch` 不再自动绑定计数器，显示生命周期由启动器
 循环负责；显示失败不会丢弃已经登记好的监听。
 
 正常退出 Codex 时，会清空计数；若布局仍与启动器设置的一致，就恢复进入前保存
@@ -258,7 +320,7 @@ python3 scripts/install_iterm.py --uninstall
 iTerm2 窗口，也没有另起一个新的交互式 Codex TUI。API 关闭时，核心监听服务
 和下面的当前会话手动方式仍可正常使用；具体证据见[验收记录](docs/validation.md)。
 
-### 升级到 0.1.1 与身份排查
+### 升级后的身份排查
 
 **自动启动不需要每次新开 shell 都确认 UUID。** 启动器核验实际终端 FD 并管理显示；
 Agent 不应为了验收自动显示而执行手动 `iterm attach`。工具进程继承的旧 UUID 即使
@@ -354,7 +416,11 @@ Configure**，按需启用状态栏。将上方 **Status Bar Component Menu** �
 - 事件通过已有 Codex app-server 的 Unix WebSocket 和独立 `toolOutput` 投递，
   保留外部工具输出身份，不覆盖目标会话的模型、权限或审批策略。
 - 文件偏移与待投递事件使用同一 SQLite 事务保存，重启可续读；文件轮转、截断会重置偏移。
+- `doctor` 的 `runtime_loaded`、`delivery_ready`、`registration_ready`、`delivery_state`
+  区分历史可读和运行时就绪。新登记会拒绝未加载、无法核实、不支持直接输入或系统错误
+  的目标；等待审批或输入时可登记，事件先暂存。
 - 等待用户输入/审批、未加载的会话会暂存事件；服务不替用户审批，也不会擅自恢复会话。
+  已有 watcher 后来卸载时，事件继续 pending，没有 TTL，也不会自动丢弃。
 - `accepted` 只表示 Codex 接受并返回 turn id，处理是否完成要看原会话回复。
 - `uncertain` 表示投递后没有拿到确定回执；不会自动重发。先核对会话历史，必要时
   执行 `codex-monitor retry EVENT_ID`。不声称“严格恰好一次”。
@@ -372,9 +438,24 @@ python3 -m unittest discover -s tests -v
 python3 scripts/package.py
 ```
 
-生成独立源码包 `dist/codex-monitor-0.1.1.zip` 和技能包
+生成独立源码包 `dist/codex-monitor-0.1.3.zip` 和技能包
 `dist/codex-monitor.skill`。你可以直接将本仓库上传自己的 GitHub；发布包不包含
 个人账户、机器路径或运行数据。skill 包仍需单独安装服务。
+
+可选的真实 CLI 路由和投递检查：
+
+```bash
+python3 scripts/routing_check.py --run --deliver \
+  --codex-home /ACTUAL/HOME --codex-bin /ORIGINAL/CODEX \
+  --cwd /TRUSTED/WORKSPACE --timeout 300 --output /PRIVATE/REPORT.json
+```
+
+`--run` 通过生产启动器在私有 PTY 中启动官方 CLI，只使用自身创建的精确测试线程，
+核验该线程从未加载变为同一共享后端中的已加载状态，不猜测“最新会话”。iTerm2 GUI、
+身份和 home 查询使用 mock，因此不验证真实可见显示，也不应用标题配置。
+不加 `--deliver` 时不提交模型回合；明确加上 `--deliver` 会在所选账户中创建真实模型
+回合并核验确认回复。通知已接受不等于模型已经回复。清理只针对测试自有资源，
+具体结果见[验收记录](docs/validation.md)。
 
 可选真实验收（使用当前 Codex 账户，产生少量正常模型用量）：
 

@@ -61,6 +61,8 @@ class Peer:
                     result = {}
                     if method == 'thread/read':
                         result = {'thread': {'id': THREAD, 'status': self.status, 'canAcceptDirectInput': True}}
+                    elif method == 'thread/loaded/list':
+                        result = {'data': [THREAD], 'nextCursor': None}
                     elif method == 'turn/start':
                         result = {'turn': {'id': 'turn-accepted', 'status': 'inProgress'}}
                     data = json.dumps({'id': request['id'], 'result': result}).encode()

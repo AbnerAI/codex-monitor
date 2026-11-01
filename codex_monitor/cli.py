@@ -55,6 +55,11 @@ def parser():
     p.add_argument('--json', action='store_true')
     p = sub.add_parser('iterm', help='Publish a counter variable in the current iTerm2 session')
     iterm = p.add_subparsers(dest='iterm_action', required=True)
+    item = iterm.add_parser('configure-title', help='Preview or apply one-time native title configuration')
+    item.add_argument('--codex-home', required=True, help='Exact Codex home used by the intended CLI')
+    item.add_argument('--codex-bin', default=None)
+    item.add_argument('--socket', default=None)
+    item.add_argument('--apply', action='store_true', help='Persist only the native title field for future launches')
     for name in ('attach', 'status', 'detach', 'api-status', 'identify'):
         item = iterm.add_parser(name)
         item.add_argument('--session', default=None)
@@ -99,12 +104,13 @@ def doctor(args):
         rpc.connect()
         result['app_server_connected'] = True
         if args.thread:
-            target = rpc.target(args.thread)
-            result['thread_status'] = target.get('status')
-            result['can_accept_direct_input'] = target.get('canAcceptDirectInput')
-            result['exact_thread_verified'] = target.get('id') == args.thread
+            result.update(rpc.readiness(args.thread))
+            if not result['registration_ready']:
+                result['note'] = rpc.unavailable_message(result)
         else:
             result['exact_thread_verified'] = False
+            result.update(runtime_loaded=None, delivery_ready=False, registration_ready=False,
+                          delivery_state='missing_thread_id')
             result['note'] = 'Supply --thread or invoke from a Codex shell with CODEX_THREAD_ID'
     finally:
         rpc.close()
@@ -114,6 +120,10 @@ def doctor(args):
 def execute(args):
     root = Path(args.state_dir).expanduser().resolve()
     if args.action == 'iterm':
+        if args.iterm_action == 'configure-title':
+            from .title_setup import configure_native_title
+            return configure_native_title(home_path(args.codex_home), codex_binary(args.codex_bin),
+                                          socket_path=args.socket, apply=args.apply)
         from . import iterm
         return iterm.execute(root, args)
     if args.action == 'statusline':
@@ -173,6 +183,17 @@ def execute(args):
         else:
             spec.update(command=args.command, cwd=str(Path(args.cwd).expanduser().resolve()))
         validate_spec(spec)
+        # An already-running older monitor service does not acquire new checks
+        # when files are upgraded. Verify on the client too, before contacting it.
+        rpc = CodexRPC(spec['codex_home'], spec['codex_bin'], spec.get('socket'))
+        try:
+            readiness = rpc.readiness(spec['thread_id'])
+            if not readiness['registration_ready']:
+                raise RpcError(rpc.unavailable_message(readiness), dict(
+                    readiness, thread_id=spec['thread_id'], codex_home=spec['codex_home'],
+                    socket=rpc.socket_path))
+        finally:
+            rpc.close()
         # The launching client owns its display. Tool subprocess environments
         # may belong to another terminal, including on a resumed thread.
         return control(root, {'method': 'watch', 'spec': spec})
@@ -197,6 +218,8 @@ def main():
             print(result['label'])
         else:
             print(json.dumps(result, ensure_ascii=False, indent=2))
+        if args.action == 'doctor' and not result.get('registration_ready'):
+            raise SystemExit(2)
     except (OSError, ValueError, RpcError, RuntimeError) as exc:
         error = {'error': str(exc)}
         if isinstance(getattr(exc, 'details', None), dict):

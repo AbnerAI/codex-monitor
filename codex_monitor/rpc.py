@@ -12,7 +12,9 @@ from . import __version__
 
 
 class RpcError(RuntimeError):
-    pass
+    def __init__(self, message, details=None):
+        super().__init__(message)
+        self.details = details or {}
 
 
 class UncertainDelivery(RpcError):
@@ -130,16 +132,79 @@ class CodexRPC:
     def target(self, thread_id):
         return self.request('thread/read', {'threadId': thread_id, 'includeTurns': False})['thread']
 
+    def runtime_loaded(self, thread_id):
+        """Check this server's runtime, not the history shared on disk."""
+        cursor, seen = None, set()
+        for _ in range(32):
+            params = {'limit': 100}
+            if cursor is not None:
+                params['cursor'] = cursor
+            reply = self.request('thread/loaded/list', params)
+            if (not isinstance(reply, dict) or not isinstance(reply.get('data'), list)
+                    or not all(isinstance(item, str) for item in reply['data'])):
+                raise RpcError('Invalid thread/loaded/list response; runtime ownership cannot be verified')
+            if thread_id in reply['data']:
+                return True
+            cursor = reply.get('nextCursor')
+            if cursor is None:
+                return False
+            if not isinstance(cursor, str) or not cursor or cursor in seen:
+                raise RpcError('Invalid thread/loaded/list cursor; runtime ownership cannot be verified')
+            seen.add(cursor)
+        raise RpcError('thread/loaded/list exceeded its page limit; runtime ownership cannot be verified')
+
+    def readiness(self, thread_id):
+        """Distinguish persisted identity from a runtime that can accept input."""
+        target = self.target(thread_id)
+        status = target.get('status')
+        status = status if isinstance(status, dict) else {}
+        result = {'exact_thread_verified': target.get('id') == thread_id,
+                  'thread_status': status,
+                  'can_accept_direct_input': target.get('canAcceptDirectInput'),
+                  'runtime_loaded': None, 'delivery_ready': False,
+                  'registration_ready': False, 'delivery_state': 'thread_id_mismatch'}
+        if not result['exact_thread_verified']:
+            return result
+        try:
+            result['runtime_loaded'] = self.runtime_loaded(thread_id)
+        except (RpcError, OSError, ValueError) as exc:
+            result.update(delivery_state='runtime_verification_failed', diagnostic_error=str(exc))
+            return result
+        state = status.get('type')
+        if not result['runtime_loaded']:
+            result['delivery_state'] = 'thread_not_loaded'
+        elif state == 'notLoaded':
+            result['delivery_state'] = 'thread_state_inconsistent'
+        elif state == 'systemError':
+            result['delivery_state'] = 'system_error'
+        elif state not in ('idle', 'active'):
+            result['delivery_state'] = 'unsupported_thread_status'
+        elif result['can_accept_direct_input'] is False:
+            result['delivery_state'] = 'direct_input_not_supported'
+        else:
+            result['registration_ready'] = True
+            result['delivery_ready'] = not bool(status.get('activeFlags'))
+            result['delivery_state'] = ('ready' if result['delivery_ready']
+                                        else 'waiting_for_approval_or_input')
+        return result
+
+    def unavailable_message(self, readiness):
+        state = readiness['delivery_state']
+        if state == 'thread_not_loaded':
+            return ('Target thread is not loaded in the connected app-server. Shared history '
+                    'does not prove runtime ownership: an in-process Codex CLI or another '
+                    'runtime cannot receive notifications through this daemon. Verify the '
+                    'owning shared-daemon connection; do not resume the thread in this server.')
+        return 'Target runtime cannot accept monitor delivery: ' + state
+
     def deliver(self, thread_id, notice):
         with self.lock:
-            target = self.target(thread_id)
-            status = target.get('status', {})
-            if status.get('activeFlags'):
-                raise Deferred('Thread is waiting for approval or user input')
-            if status.get('type') in ('notLoaded', 'systemError'):
-                raise Deferred('Thread is not ready; reopen it in the owning Codex CLI')
-            if target.get('canAcceptDirectInput') is False:
-                raise Deferred('Owning app-server does not accept input for this thread')
+            readiness = self.readiness(thread_id)
+            if not readiness['delivery_ready']:
+                message = ('Thread is waiting for approval or user input'
+                           if readiness['delivery_state'] == 'waiting_for_approval_or_input'
+                           else self.unavailable_message(readiness))
+                raise Deferred(message, readiness)
             # Standalone tool output preserves external-event provenance. Omit
             # model, permissions, cwd and approval overrides entirely.
             result = self.request('turn/start', {

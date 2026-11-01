@@ -33,7 +33,8 @@ def control(root, request, timeout=25):
         raise RuntimeError('Invalid monitor service response')
     response = json.loads(data)
     if not response.get('ok'):
-        raise RuntimeError(response.get('error', 'Monitor service request failed'))
+        raise RpcError(response.get('error', 'Monitor service request failed'),
+                       response.get('details') if isinstance(response.get('details'), dict) else None)
     return response['result']
 
 
@@ -47,12 +48,14 @@ class Engine:
         self.instance = uuid.uuid4().hex
 
     def arm(self, spec):
-        # Verify the exact thread exists on the exact profile before saving it.
+        # A historical thread can exist here while a different process owns it.
         rpc = self.rpc_factory(spec['codex_home'], spec['codex_bin'], spec.get('socket'))
         try:
-            target = rpc.target(spec['thread_id'])
-            if target['id'] != spec['thread_id']:
-                raise ValueError('Codex returned a different thread id')
+            readiness = rpc.readiness(spec['thread_id'])
+            if not readiness['registration_ready']:
+                raise RpcError(rpc.unavailable_message(readiness), dict(
+                    readiness, thread_id=spec['thread_id'], codex_home=spec['codex_home'],
+                    socket=getattr(rpc, 'socket_path', spec.get('socket'))))
         finally:
             rpc.close()
         watcher_id = self.store.add(spec, initial_cursor(spec))
@@ -236,6 +239,8 @@ class Handler(socketserver.StreamRequestHandler):
             response = {'ok': True, 'result': result}
         except (ValueError, KeyError, OSError, RpcError, RuntimeError) as exc:
             response = {'ok': False, 'error': str(exc)[:2000]}
+            if isinstance(getattr(exc, 'details', None), dict) and exc.details:
+                response['details'] = exc.details
         try:
             self.wfile.write(json.dumps(response, ensure_ascii=False).encode() + b'\n')
         except OSError:

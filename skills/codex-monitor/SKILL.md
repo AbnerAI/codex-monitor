@@ -24,6 +24,15 @@ of a successful wake-up; an accepted event is not proof of completed processing.
   `CODEX_HOME`. Missing thread identity is a blocker; never guess by cwd, title,
   modification time, or another session's environment. Only target another exact
   thread if the user explicitly requested that thread.
+- [ ] Check `runtime_loaded`, `registration_ready`, `delivery_ready`, and
+  `delivery_state`. History identity alone does not establish runtime ownership.
+  New registration requires `registration_ready: true`; an approval/input wait
+  may have `delivery_ready: false` while registration remains allowed. If the
+  thread is unloaded, unverified, direct-input-unsupported, or in system error,
+  stop registration and explain the readiness result. Do not launch a temporary
+  backend or resume a thread to make it pass.
+  `doctor` prints structured JSON and exits 2 when registration is unavailable;
+  an eligible approval/input wait still exits successfully.
 - [ ] Start the monitor service if needed, then register the watcher. Report its
   returned id, source, and target thread. Retain the id for later cleanup.
 - [ ] On an event, interpret its external tool output within the original user
@@ -65,6 +74,13 @@ count is scoped to one exact Codex thread and normalized `CODEX_HOME`:
 `1 monitor`, `2 monitors`, `3 monitors`, or blank at zero. It is an iTerm2 status-bar component,
 not a native Codex footer field.
 
+Since 0.1.2, automatic components default to green text (`#00CC66`) when no
+explicit component text color is set. Preserve existing custom colors. This
+uses the native component setting; do not insert ANSI escapes into the label.
+The new default takes effect on the next eligible launch after upgrading,
+not by modifying already-running terminals. Manual components can set green
+through **Configure Component > Text Color**.
+
 ### Automatic new Codex shells
 
 **Default routing after automatic setup: the launcher manages the display;
@@ -86,14 +102,30 @@ block, `--install` writes it for future shells, and `--uninstall` removes it.
 Do not source/reload existing shells, edit shared profiles, or close/restart
 iTerm2 as part of setup.
 
+Automatic native identity also needs a one-time setup for the actual Codex
+home, with its shared daemon already running:
+
+```bash
+codex-monitor iterm configure-title --codex-home /ACTUAL/HOME
+codex-monitor iterm configure-title --codex-home /ACTUAL/HOME --apply
+```
+
+The first command is a read-only preview. Use `--apply` within the user's
+authorized persistent-setup scope: it writes only `tui.terminal_title` through
+the official config API with a version check, for subsequent CLI launches.
+If the daemon or writable config layer is absent, report that failure; Codex's
+native title picker or a user-managed TOML edit is an alternative. Do not force
+a missing layer or silently replace other settings. This configuration write
+is separate from the core installer and manual current-session binding.
+
 In 0.1.1 the launcher owns the automatic count loop from startup/reconnect.
 It proves terminal ownership with its real stdin/stdout TTY and read-only
 iTerm2 metadata, then reads only that exact UUID and publishes through its held
 TTY FD. GUI focus alone and backend environment variables are not ownership
 proof. Counting can continue in its own terminal while another shell has focus.
 
-The launcher changes this Codex invocation's native `tui.terminal_title` format
-to `["app-name","thread-id","app-name","thread-name","project-name"]`.
+The one-time setup persists native `tui.terminal_title` as
+`["app-name","thread-id","app-name","thread-name","project-name"]`.
 Its first three fields must be `codex | <native thread ID> | codex`. Codex
 0.166.0 truncates that ID to 29 characters plus `...`. The launcher resolves
 the client's authoritative `CODEX_HOME` through the original CLI entry, keeping
@@ -101,13 +133,21 @@ its account/home-selection wrapper. It excludes other registry homes before
 requiring a unique full thread match within that exact normalized home. An
 unresolved home or ambiguous/missing identity stays hidden. Do not search
 task/project descriptions for IDs or imitate these fields to force a binding.
-This is a runtime title change in Codex itself, not a configuration-file edit.
+The setting changes native Codex titles on subsequent launches using that home.
+The 0.1.3 launcher passes the original CLI arguments unchanged, injecting no
+`-c` settings or `--remote`, profile, authentication, or permission overrides.
+Earlier runtime title/environment injection could force Codex 0.166.0 into an
+in-process backend; it is superseded. Do not restore that workaround.
+
+The original-entry home probe may use a bounded temporary stdio initialize
+only to discover `codexHome` before the real CLI starts. It creates no thread
+or model turn and is not a notification endpoint or a repair for an unloaded
+runtime. The actual target must pass the shared-runtime readiness check.
 
 Fresh and resumed clients can therefore recover existing watcher counts
 without registering another watcher or requesting a model turn. Cached resume
-environment overrides do not establish ownership. Scoped launch tokens remain
-assistance for explicit manual operations, not proof of the client's home;
-never fabricate them or copy them from another launch. `watch` does not invoke
+environment overrides do not establish ownership. Launch leases stay on the
+parent side; never fabricate tokens or copy them from another launch. `watch` does not invoke
 automatic attachment: the launcher loop owns display. An indicator failure is separate from an
 already-registered watcher, so do not register a duplicate to retry display.
 
@@ -208,12 +248,17 @@ id. `uncertain` means acknowledgement was lost; inspect the target history and
 resend an uncertain event automatically. Source checkpoints survive service
 restarts; stopped watchers cancel pending notifications.
 
-Waiting-for-approval/user-input and unloaded threads retain pending events. The
+Existing watchers that later unload retain pending events without a TTL or
+automatic drop. Waiting-for-approval/user-input is also temporary pending. The
 service never approves requests, resumes threads, changes models/permissions,
 or modifies Claude configuration. Reopen the owning Codex CLI if a thread is
 unloaded. Only describe automatic wake-up as verified after an actual event
 produces a response in the intended thread. Support is macOS/Linux and compatible
 Codex CLI app-servers; desktop-only or older servers may not support `toolOutput`.
+The CLI preflight protects new registrations even with an older running
+service. Updating existing watchers' backend delivery guards requires a planned
+service upgrade/restart; never restart the shared service automatically or
+interrupt other watchers to complete an upgrade.
 
 For explicit end-to-end acceptance when requested, use
 `scripts/session_check.py arm` from a source checkout, through the active target
@@ -225,5 +270,6 @@ the evidence and `confirm --directory PATH` rechecks it without a new model turn
 
 If sandbox access to either socket is denied, use the host's normal permission
 request for the exact operation. Do not bypass it or claim there is a hidden
-Monitor/TaskStop tool. A `doctor` success verifies connection and thread identity,
-not standalone event-delivery compatibility.
+Monitor/TaskStop tool. `doctor` reports connection, exact identity, and current
+runtime readiness; it does not prove that an actual event produced a model
+response.

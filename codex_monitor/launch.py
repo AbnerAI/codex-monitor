@@ -14,13 +14,19 @@ import uuid
 from .iterm import action, attachment_path, save, session_id, stop_owned_launch_updater, stop_updater
 from .launch_state import (create_lease, invalidate_lease, launch_lock, lease_path,
                            read_lease, refresh_lease, valid_lease)
-from .client_counter import TITLE_ITEMS, resolve_counter
+from .client_counter import resolve_counter
 from .client_home import discover_client_home
 from .daemon import control
 
 EXPRESSION = r'\(user.codexMonitor)'
+TEXT_COLOR_KEY = 'shared text color'
+# Native iTerm2 color dictionary, sRGB #00CC66 (not an ANSI escape).
+DEFAULT_TEXT_COLOR = {'Color Space': 'sRGB', 'Red Component': 0.0,
+                      'Green Component': 0.8, 'Blue Component': 0.4,
+                      'Alpha Component': 1.0}
 COMPONENT = {'class': 'iTermStatusBarSwiftyStringComponent',
-             'configuration': {'knobs': {'expression': EXPRESSION}}}
+             'configuration': {'knobs': {'expression': EXPRESSION,
+                                          TEXT_COLOR_KEY: DEFAULT_TEXT_COLOR}}}
 VALUE_OPTIONS = {'-c', '--config', '--enable', '--disable', '--remote',
                  '--remote-auth-token-env', '-m', '--model', '--local-provider',
                  '-p', '--profile', '-s', '--sandbox', '-C', '--cd', '--add-dir',
@@ -54,18 +60,6 @@ def interactive_arguments(arguments):
             positional = value
         index += 1
     return positional not in NONINTERACTIVE
-
-
-def runtime_overrides(identifier, token, state_dir=None, client_counter=False):
-    # Explicit per-invocation tool environment avoids using environment left in
-    # a shared app-server by a different terminal. No model/permission override.
-    result = ['-c', 'shell_environment_policy.set.CODEX_MONITOR_LAUNCH_TOKEN=' + json.dumps(token),
-              '-c', 'shell_environment_policy.set.CODEX_MONITOR_ITERM_SESSION=' + json.dumps(identifier)]
-    if state_dir is not None:
-        result += ['-c', 'shell_environment_policy.set.CODEX_MONITOR_HOME=' + json.dumps(str(state_dir))]
-    if client_counter:
-        result += ['-c', 'tui.terminal_title=' + json.dumps(TITLE_ITEMS)]
-    return result
 
 
 def api_python():
@@ -116,6 +110,8 @@ def augmented_profile(original):
         knobs = configuration.get('knobs') if isinstance(configuration, dict) else None
         if (component.get('class') == COMPONENT['class'] and isinstance(knobs, dict)
                 and knobs.get('expression') == EXPRESSION):
+            if knobs.get(TEXT_COLOR_KEY) is None:
+                knobs[TEXT_COLOR_KEY] = copy.deepcopy(DEFAULT_TEXT_COLOR)
             return {'layout': layout, 'enabled': True}
     layout['components'].append(copy.deepcopy(COMPONENT))
     return {'layout': layout, 'enabled': True}
@@ -343,8 +339,10 @@ def launch(root, executable, arguments):
             decoration = None
         if decoration is not None:
             environment['CODEX_MONITOR_LAUNCH_ACTIVE'] = decoration.token
-            command = [executable] + runtime_overrides(decoration.identifier, decoration.token, root,
-                                                       client_counter=True) + arguments
+            # Codex 0.166 excludes shared-daemon use when CLI config overrides
+            # contain shell_environment_policy or tui.terminal_title. Never
+            # inject -c here: the running TUI and monitor must share a runtime.
+            # Native title markers are configured once, via explicit opt-in.
         return wait_child(command, environment, decoration)
     finally:
         try:

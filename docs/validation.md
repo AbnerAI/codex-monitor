@@ -1,5 +1,106 @@
 # Validation record
 
+## 0.1.3 shared-runtime correction
+
+Actual Codex 0.166.0 startup logs confirmed that the launcher's injected `-c`
+environment/title settings could exclude the shared daemon and start an
+in-process thread. The 0.1.1/0.1.2 isolated and layout checks below did not prove
+that a freshly launched client remained in the intended shared runtime.
+
+Release 0.1.3 removes every injected `-c` flag and forwards the original CLI
+arguments unchanged. Native title identity now requires an explicit one-time
+persisted `tui.terminal_title` setup for the actual home. `iterm configure-title`
+is a read-only preview; `--apply` writes only that key through the official
+configuration API with a version check. It requires an existing shared daemon
+and applies to subsequent CLI launches. Missing daemon/configuration layers
+fail clearly; setup does not force a layer or alter unrelated settings.
+
+`doctor` now combines exact `thread/read` identity with `thread/loaded/list`.
+It reports `runtime_loaded`, `delivery_ready`, `registration_ready`, and
+`delivery_state`. New registrations reject unloaded/unverified targets,
+unsupported direct input, and system errors before storage. Approval/input
+waits remain eligible for registration and temporarily defer delivery.
+`doctor` emits structured JSON and exits 2 when `registration_ready` is false;
+an eligible approval/input wait retains a successful exit status.
+Existing watchers that later unload keep pending events without a TTL or
+automatic drop. No backend or thread resume is used to repair runtime ownership.
+A temporary stdio initialize may still be used solely to discover the original
+wrapper's home before launch; it creates no thread or model turn and is never
+the notification endpoint.
+
+The CLI preflight protects new registrations even with an older running
+service. Updating existing watchers' backend guards requires a separately
+planned service upgrade/restart; no shared service or other shell is restarted
+automatically. The 0.1.2 green-default behavior is retained.
+
+| 0.1.3 check | Result |
+|---|---|
+| Isolated unit/integration regressions | 183 passed |
+| Actual current-thread `doctor`, Codex 0.166.0 | Passed: exact shared-runtime thread loaded, registration and delivery ready |
+| Actual `iterm configure-title` preview | Passed read-only against Codex 0.166.0; `applied: false` |
+| Actual persisted title setup in the user's Codex home | Not applied during these checks |
+| Official CLI/private-PTY shared-runtime routing | Verified: fixture was unloaded before CLI startup, then loaded and delivery-ready in the same backend after the CLI resumed its exact ID; original argv had no injected `-c` |
+| Actual notification transport through `CodexRPC.deliver` | Accepted turn returned and canonical `functionCallOutput` observed; `notification_accepted: true` |
+| First 90-second model-acknowledgement attempt | Timed out: turn remained running until fixture cleanup; no canonical agent item matched, `model_ack_verified: false`, overall report `passed: false` |
+| Warmed user-task rerun with a larger bounded deadline, observed idle then acknowledgement | Passed: canonical READY user/agent items belonged to the same warmup turn; after observed idle, the canonical agent ACK matched the exact accepted notification turn; `warmup_ready`, `observed_idle_after_warmup`, `model_ack_verified`, and overall `passed` were true |
+| Live watcher-worker path in this routing harness | Not exercised; delivery called `CodexRPC.deliver` directly, with zero watchers and no monitor service created; worker behavior has isolated coverage |
+| Actual iTerm2 GUI end-to-end verification | Pending; GUI, terminal identity, and home lookups were mocked in the private-PTY harness |
+
+The routing harness exercised the production launcher decoration path with the
+official CLI. Only the iTerm2 GUI and its identity/home lookups were replaced.
+It first established an unloaded baseline for its own known fixture, so a
+previously loaded RPC-created thread could not make the routing check pass.
+It then proved the resumed CLI belonged to the same shared runtime. No live
+iTerm2 profile or native title configuration was written, no monitor service
+was started, and no watchers were created. The successful rerun stopped its own
+fixture client (exit 143) and archived its thread during cleanup.
+
+The first empty-fixture attempt established routing and accepted external tool
+output but did not verify an agent reply within 90 seconds. A subsequent rerun
+used a larger bounded deadline and first established a faithful user task with canonical READY user and agent
+items in its warmup turn, then observed the fixture idle. The real notification
+was accepted afterward, and its canonical agent ACK belonged to that exact
+accepted notification turn. This rerun reported `passed: true`,
+`transport_verified: true`, `notification_accepted: true`, and
+`model_ack_verified: true`; it does not erase the earlier timeout. Because both
+task context and the waiting budget changed, these checks do not isolate what
+caused the first attempt to time out.
+
+The successful rerun verifies shared-runtime routing, native notification
+acceptance, and a real model acknowledgement. It does not verify visible GUI
+behavior, persisted title application, or the full file-watcher/worker delivery
+path. The earlier actual current-thread idle acknowledgement remains separate
+historical evidence below.
+
+To opt in to the real CLI routing check, including real model delivery:
+
+```bash
+python3 scripts/routing_check.py --run --deliver \
+  --codex-home /ACTUAL/HOME --codex-bin /ORIGINAL/CODEX \
+  --cwd /TRUSTED/WORKSPACE --timeout 300 --output /PRIVATE/REPORT.json
+```
+
+`--run` is required and creates/archives only an owned exact fixture; it does
+not infer the latest thread or alter workspace trust. Without `--deliver`,
+startup verification submits no model turn. Explicit `--deliver` creates real
+model turn(s) using the selected account and attempts to match a canonical agent
+acknowledgement to the accepted turn. It can incur normal model usage. Inspect
+`transport_verified`, `notification_accepted`, `warmup_ready`,
+`observed_idle_after_warmup`, `model_ack_verified`, and overall `passed`
+separately. A longer deadline alone is not evidence of success; the successful
+rerun also verified the canonical warmup and notification-turn identities.
+
+## 0.1.2 green default (historical)
+
+All 155 regression tests passed. Launcher lifecycle coverage checks the native
+green sRGB color dictionary, adding the default to an existing counter without
+an explicit color, preserving custom colors and unrelated components, and
+restoring the original layout on exit. No live iTerm2 color change was performed
+for this release. New launches after upgrade apply the default; existing
+terminals are not modified by installation.
+
+## Earlier validation
+
 Environment: macOS, Python 3.9.6, Codex CLI/app-server 0.166.0.
 
 The following live GUI observations are historical 0.1.0 evidence. Their
@@ -99,11 +200,16 @@ forwarding have separate isolated coverage. The report has `passed: true` and
 
 ## 0.1.1 third-party regression follow-up
 
+This section describes the historical implementation. Its runtime `-c`
+title/environment injection and configuration-free setup were superseded by
+0.1.3 after the shared-daemon exclusion was reproduced. The following isolated
+checks are not evidence that the old launch path preserved runtime ownership.
+
 The third-party review identified cross-terminal and resume risks in relying
 on tool-inherited terminal IDs or waiting for a new `watch`. The replacement
 parent/client count loop starts with the launcher, validates its real terminal
 FD against read-only metadata, and reads native identity only from its owned
-terminal. Its runtime native title includes the leading
+terminal. Its then-runtime-configured native title included the leading
 `codex | <thread ID> | codex` markers. Codex 0.166.0's truncated ID prefix is
 resolved only when the active watcher registry supplies exactly one full
 thread ID plus normalized `CODEX_HOME` pair; ambiguity hides the count.

@@ -84,6 +84,10 @@ class TerminalDecoration(unittest.TestCase):
         self.assertEqual(self.current['layout']['components'][:-1], before['layout']['components'])
         self.assertEqual(self.current['layout']['advanced'], before['layout']['advanced'])
         self.assertEqual(self.current['layout']['components'][-1]['configuration']['knobs']['expression'], EXPRESSION)
+        color = self.current['layout']['components'][-1]['configuration']['knobs']['shared text color']
+        self.assertEqual(color, {'Color Space': 'sRGB', 'Red Component': 0.0,
+                                 'Green Component': 0.8, 'Blue Component': 0.4,
+                                 'Alpha Component': 1.0})
         self.assertTrue(read_lease(self.root, SESSION)['active'])
 
         decoration.close()
@@ -98,7 +102,9 @@ class TerminalDecoration(unittest.TestCase):
     def test_existing_monitor_component_is_reused_and_original_visibility_restored(self):
         self.current['layout']['components'].append({
             'class': 'iTermStatusBarSwiftyStringComponent',
-            'configuration': {'knobs': {'expression': EXPRESSION, 'color': '#00ff00'}},
+            'configuration': {'knobs': {'expression': EXPRESSION, 'shared text color': {
+                'Color Space': 'sRGB', 'Red Component': 1.0,
+                'Green Component': 0.0, 'Blue Component': 0.0, 'Alpha Component': 1.0}}},
         })
         before = copy.deepcopy(self.current)
         decoration = Decoration(self.root, SESSION, DESCRIPTOR).prepare()
@@ -107,6 +113,25 @@ class TerminalDecoration(unittest.TestCase):
         self.assertTrue(self.current['enabled'])
         decoration.close()
         self.assertEqual(self.current, before)
+
+    def test_existing_counter_without_color_gets_green_and_original_layout_is_restored(self):
+        for color in ('absent', None):
+            with self.subTest(color=color):
+                component = {'class': 'iTermStatusBarSwiftyStringComponent',
+                             'configuration': {'knobs': {'expression': EXPRESSION, 'priority': 9}}}
+                if color is None:
+                    component['configuration']['knobs']['shared text color'] = None
+                self.current = copy.deepcopy(self.original)
+                self.current['layout']['components'].append(component)
+                before = copy.deepcopy(self.current)
+                decoration = Decoration(self.root, SESSION, DESCRIPTOR).prepare()
+                self.assertEqual(len(self.current['layout']['components']), 2)
+                knobs = self.current['layout']['components'][-1]['configuration']['knobs']
+                self.assertEqual(knobs['priority'], 9)
+                self.assertEqual(knobs['shared text color']['Green Component'], 0.8)
+                self.assertEqual(self.current['layout']['components'][0], before['layout']['components'][0])
+                decoration.close()
+                self.assertEqual(self.current, before)
 
     def test_user_layout_changes_during_codex_are_preserved_on_exit(self):
         decoration = Decoration(self.root, SESSION, DESCRIPTOR).prepare()
@@ -205,23 +230,14 @@ class LaunchRunner(unittest.TestCase):
         self.close_fd.assert_called_once_with(DESCRIPTOR)
         self.assertIn('indicator unavailable', error.getvalue())
 
-    def test_success_adds_only_exact_session_environment_keys_and_retains_all_user_arguments(self):
+    def test_decorated_launch_preserves_original_argv_without_daemon_excluding_overrides(self):
         arguments = ['--model', 'my model', '--sandbox', 'workspace-write', '--', 'literal prompt']
         result = launch(self.root, self.original, ['--'] + arguments)
         self.assertEqual(result, 7)
         self.wait.assert_called_once()
         command, environment, decoration = self.wait.call_args.args
-        self.assertEqual(command[0], self.original)
-        self.assertEqual(command[-len(arguments):], arguments)
-        overrides = command[1:-len(arguments)]
-        self.assertEqual(overrides[::2], ['-c', '-c', '-c', '-c'])
-        values = {key: json.loads(value) for key, value in (item.split('=', 1) for item in overrides[1::2])}
-        self.assertEqual(values, {
-            'shell_environment_policy.set.CODEX_MONITOR_LAUNCH_TOKEN': TOKEN,
-            'shell_environment_policy.set.CODEX_MONITOR_ITERM_SESSION': SESSION,
-            'shell_environment_policy.set.CODEX_MONITOR_HOME': str(self.root),
-            'tui.terminal_title': ['app-name', 'thread-id', 'app-name', 'thread-name', 'project-name'],
-        })
+        self.assertEqual(command, [self.original] + arguments)
+        self.assertNotIn('-c', command)
         self.assertEqual(environment, dict(self.environment, CODEX_MONITOR_LAUNCH_ACTIVE=TOKEN))
         self.assertIs(decoration, self.decoration)
         self.home_discovery.assert_called_once_with(self.original, arguments)
@@ -230,6 +246,11 @@ class LaunchRunner(unittest.TestCase):
             codex_home=str(self.root / 'selected-profile'))
         self.decoration.close.assert_called_once()
         self.close_fd.assert_called_once_with(DESCRIPTOR)
+
+    def test_explicit_user_config_is_preserved_but_monitor_adds_no_config(self):
+        arguments = ['-c', 'model_reasoning_effort="high"', 'resume', '--last']
+        launch(self.root, self.original, arguments)
+        self.assertEqual(self.wait.call_args.args[0], [self.original] + arguments)
 
     def test_unresolved_account_wrapper_launches_original_without_guessing_parent_home(self):
         self.home_discovery.side_effect = RuntimeError('selected Codex profile unavailable')

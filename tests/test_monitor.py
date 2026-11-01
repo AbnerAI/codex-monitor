@@ -151,6 +151,9 @@ class FakeRPC:
     def target(self, thread_id):
         return {'id': thread_id}
 
+    def readiness(self, thread_id):
+        return {'registration_ready': True}
+
     def deliver(self, thread_id, notice):
         if self.blocked:
             raise Deferred('waiting for user input')
