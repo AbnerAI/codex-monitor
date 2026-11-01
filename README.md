@@ -53,6 +53,34 @@ The watcher service uses only the standard library. Automatic iTerm2 display
 setup has a separate, optional Python client. No Claude Code installation or
 binary patch is involved.
 
+## What's new in 0.1.1
+
+- Automatic iTerm2 counting now belongs to the launching Codex client. New and
+  resumed clients can display existing active watchers without creating another
+  watcher or waiting for a model turn.
+- Terminal ownership is checked against the actual launching TTY. Inherited
+  terminal IDs cannot silently redirect the display to another shell. Manual
+  mismatch diagnostics include both full UUIDs and an explicit confirmation path.
+- Counts are restricted to the client's verified `CODEX_HOME` and thread.
+  Missing or ambiguous identity hides the count. This invocation's native Codex
+  terminal title includes thread-ID markers to support that check.
+- Labels are now `1 monitor`, `2 monitors`, `3 monitors`, and blank at zero.
+
+**A matching 0.1.1 version does not mean automatic display is configured.**
+The core installer installs the service, CLI, and skill. Automatic display also
+needs the separate iTerm2 Python runtime, iTerm2's Python API enabled once, and
+the managed zsh startup block. These are separate setup steps.
+
+| Your starting point | Follow this path |
+|---|---|
+| First installation | [Fresh installation](#fresh-installation), then [automatic iTerm2 setup](#automatic-setup-for-new-codex-shells) if you want the counter |
+| Older codex-monitor installation | [Upgrade to 0.1.1](#upgrade-to-011); check each display prerequisite rather than the version alone |
+
+Release validation: 154 isolated regression tests and a fresh offline archive
+installation passed. The new 0.1.1 automatic display path has not yet had a fresh
+live iTerm2 acceptance run; earlier live results are historical 0.1.0 evidence.
+See [validation details](docs/validation.md).
+
 ## Requirements
 
 - macOS or Linux, Python 3.9+ for the standard-library watcher service. Windows:
@@ -65,7 +93,7 @@ binary patch is involved.
 - Normal Codex authentication remains in Codex. The monitor does not read or
   copy API keys, OAuth tokens, or Claude configuration.
 
-## Install from GitHub source
+## Fresh installation
 
 Clone or download this repository, then from its root:
 
@@ -87,10 +115,44 @@ Use `--start` to start the monitor after installation. Custom destinations:
 `--prefix`, `--bin-dir`, `--skill-dir`; use `--no-skill` for service-only installs.
 Restart/open a Codex session if its skill catalog does not refresh automatically.
 
+This completes the **core installation only**. For automatic `1 monitor`
+display, also complete all three steps under
+[automatic iTerm2 setup](#automatic-setup-for-new-codex-shells). The core installer
+does not install the optional SDK, enable iTerm2's API, or edit `~/.zshrc`.
+
 To run without installing anything, substitute `python3 -m codex_monitor` for
 `codex-monitor` while your cwd is this repository. `pip install .` installs the
 service CLI only; use the source installer or copy `skills/codex-monitor` to your
 Codex skill directory when you also want the skill.
+
+## Upgrade to 0.1.1
+
+Download the 0.1.1 source release, or update your existing checkout, then run
+from that source directory:
+
+```bash
+python3 scripts/install.py
+codex-monitor --version
+```
+
+Use the same custom `--prefix`, `--bin-dir`, and `--skill-dir` options as your
+original installation, if any. Existing installation files are backed up.
+The installer does not stop or restart a shared running monitor service.
+
+If you want automatic iTerm2 counting, check the following separately:
+
+| Component | Upgrade action |
+|---|---|
+| Core service, CLI, and skill | Reinstall from the new source as above; verify `0.1.1` |
+| Optional Python runtime with `iterm2` | Reuse a working runtime; if absent, create it and install the SDK using step 2 of [automatic setup](#automatic-setup-for-new-codex-shells) |
+| iTerm2 Python API | Keep it enabled if already configured; otherwise enable it once using step 1 |
+| Managed `~/.zshrc` block | Run `python3 scripts/install_iterm.py` to preview, then `python3 scripts/install_iterm.py --install` to add or refresh it; existing custom `codex` functions/aliases require integration as described below |
+
+When ready, open a new interactive zsh shell and enter `codex` normally. An
+already-running Codex client does not acquire the new launcher's behavior from
+copying files alone. Do not close/reload other running shells or restart iTerm2.
+No manual status-bar component setup is needed for each new eligible launch.
+The count appears when that conversation has active watchers; zero stays blank.
 
 ## Use from Codex
 
@@ -214,6 +276,9 @@ Codex shell. If you already have a function or alias, integrate the explicit
 launcher command below into it yourself instead of replacing it blindly.
 In the new shell, `whence -w codex` should report a function and
 `whence -p codex` should still identify the original executable on PATH.
+Run those checks in the interactive shell used to launch Codex. An agent's
+noninteractive tool shell may not load `.zshrc`, so its result alone cannot
+establish that the startup block is missing.
 Ensure `~/.local/bin` is on PATH if you invoke `codex-monitor` by name.
 
 For each eligible local TUI launch, the typed iTerm2 API helper snapshots only
@@ -288,6 +353,15 @@ fresh interactive Codex TUI. The core service and manual indicator remain
 usable while the Python API is disabled; see [validation notes](docs/validation.md).
 
 ### Upgrading to 0.1.1 and checking identity
+
+**Automatic launches do not require per-shell UUID confirmation.** The launcher
+checks its actual terminal FD and owns the display. Agents must not run manual
+`iterm attach` just to verify automatic setup. A stale tool-environment UUID can
+disagree with the foreground terminal while automatic counting still works.
+Use read-only `iterm identify` and its `observed_launch` evidence to inspect the
+automatic path. If that path is unavailable, diagnose its runtime, API, startup
+block, or launcher warning; do not turn the failure into a UUID-confirmation
+prompt. Explicit confirmation remains required for a user-chosen manual rebind.
 
 Upgrade the service/CLI and refresh the managed zsh hook with the source
 installers above. In a newly opened interactive shell, check

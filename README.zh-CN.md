@@ -44,7 +44,30 @@ skill 通过 CLI 控制常驻监听。监听线程将读取位置与新增事件
 再通过已有 app-server 投递到原 Codex 会话；等待用户输入或审批时，事件继续暂存。
 可选的 iTerm2 分支只显示该会话的活跃监听数，与事件投递流程独立。
 
-## 安装与使用
+## 0.1.1 升级了什么
+
+- 自动计数改由启动 Codex 的客户端持续更新。新开或恢复会话时，可以恢复已有活跃
+  监听的计数，无需新建监听，也不必等模型执行一次命令。
+- 用实际启动终端的 TTY 核对归属，继承来的旧终端 ID 不会悄悄把显示绑定到其他
+  shell。手动绑定失配时，会报告双方完整 UUID，并提供明确的确认绑定方式。
+- 按已核实的客户端 `CODEX_HOME` 和 thread 统计；身份缺失或有歧义时留空。
+  为此，本次 Codex 运行的原生终端标题会包含 thread ID 标记。
+- 显示统一为 `1 monitor`、`2 monitors`、`3 monitors`，零个留空。
+
+**程序版本是 0.1.1，不等于自动显示已配置完成。** 核心安装器只安装服务、CLI 和
+skill；自动显示还需要独立的 iTerm2 Python 运行环境、开启一次 iTerm2 Python API，
+以及 `.zshrc` 中的受管启动代码。这几项需要分别配置。
+
+| 你的情况 | 安装路径 |
+|---|---|
+| 从未安装过 | 先按下方“全新安装”操作；需要计数时，再完成“新 Codex shell 自动启用”的全部步骤 |
+| 已安装旧版本 | 按下方“从旧版本升级到 0.1.1”操作；逐项检查显示依赖，不要只检查版本号 |
+
+本次已通过 154 项隔离回归测试和全新目录中的发布包离线安装检查。新版自动显示
+尚未进行新的真实 iTerm2 验收；之前的真实终端结果属于 0.1.0 的历史证据。
+详见[验收记录](docs/validation.md)。
+
+## 全新安装（首次使用）
 
 需要 macOS/Linux、Python 3.9+、已登录且启用共享 app-server 的兼容 Codex CLI。
 当前目标协议为 0.166.0；桌面版独有会话、旧版 CLI、`--no-daemon` 不保证可用。
@@ -59,6 +82,38 @@ python3 scripts/install.py
 `~/.local/bin/codex-monitor`，skill 到 `~/.agents/skills/codex-monitor/`。
 可加 `--start` 启动服务。安装器不改 Codex 配置，不启用开机启动；已有文件会备份。
 若 Codex 的技能目录没有自动刷新，重新打开会话。确保 `~/.local/bin` 在 PATH 中。
+
+到这里完成的是**核心安装**。需要自动显示 `1 monitor` 时，还必须完成下方
+“新 Codex shell 自动启用”的全部三步。核心安装器不会安装可选 SDK、开启 iTerm2
+的 API，也不会写入 `~/.zshrc`。
+
+## 从旧版本升级到 0.1.1
+
+下载 0.1.1 源码包，或更新已有源码目录，然后在新源码根目录执行：
+
+```bash
+python3 scripts/install.py
+codex-monitor --version
+```
+
+如果之前使用了自定义 `--prefix`、`--bin-dir`、`--skill-dir`，重装时沿用相同参数。
+已有安装文件会备份；安装器不会停止或重启正在运行的共享 monitor 服务。
+
+需要自动显示时，逐项检查：
+
+| 组件 | 升级时怎么处理 |
+|---|---|
+| 核心服务、CLI、skill | 按上述命令重装，确认版本为 `0.1.1` |
+| 带 `iterm2` SDK 的独立 Python 环境 | 已有且可用则复用；没有则按下方自动启用的第 2 步创建并安装 |
+| iTerm2 Python API | 已开启则保留；未开启则按第 1 步手动开启一次 |
+| `~/.zshrc` 受管启动代码 | 运行 `python3 scripts/install_iterm.py` 预览，再用 `python3 scripts/install_iterm.py --install` 添加或刷新；已有自定义 `codex` 函数或别名时，按下方说明接入 |
+
+准备好后，自行打开一个新的交互式 zsh shell，照常输入 `codex`。单纯覆盖程序文件
+不会让已经运行的 Codex 客户端获得新启动逻辑。无需关闭或重新加载其他 shell，
+无需重启 iTerm2，也无需为每个符合条件的新 Codex shell 手动添加显示组件。
+当前会话有活跃监听时才显示计数，零个仍留空。
+
+## 开始使用
 
 随后对 Codex 说：
 
@@ -144,7 +199,9 @@ codex-monitor iterm api-status
 shell 并照常输入 `codex`，每个新的 Codex shell 都不必再手动添加显示组件。
 若原先已有同名函数或别名，应自行将下面的显式启动命令接入其中，不要直接覆盖。
 在新 shell 中，`whence -w codex` 应显示函数，`whence -p codex` 仍应指向 PATH
-上的原可执行入口；直接使用 `codex-monitor` 命令时还需保证 `~/.local/bin` 在 PATH 中。
+上的原可执行入口。这两个检查应在实际启动 Codex 的交互式 shell 中执行；Agent 的
+非交互工具 shell 可能不读取 `.zshrc`，不能仅凭其结果判断启动代码未安装。
+直接使用 `codex-monitor` 命令时还需保证 `~/.local/bin` 在 PATH 中。
 
 每次符合条件的本地交互式启动，受限的 iTerm2 API 客户端先保存该终端会话当前的
 状态栏布局和启用状态，保留已有组件，只在缺少时追加计数组件，并为本次 Codex
@@ -202,6 +259,13 @@ iTerm2 窗口，也没有另起一个新的交互式 Codex TUI。API 关闭时�
 和下面的当前会话手动方式仍可正常使用；具体证据见[验收记录](docs/validation.md)。
 
 ### 升级到 0.1.1 与身份排查
+
+**自动启动不需要每次新开 shell 都确认 UUID。** 启动器核验实际终端 FD 并管理显示；
+Agent 不应为了验收自动显示而执行手动 `iterm attach`。工具进程继承的旧 UUID 即使
+与前台终端不一致，也不代表自动计数失败。应使用只读的 `iterm identify` 及其中的
+`observed_launch` 证据检查自动流程。自动流程不可用时，排查运行环境、API、启动代码
+或启动器报错，不应回退成“请确认前台 UUID”的问题。只有用户选择手动重新绑定时，
+才适用明确确认目标终端的规则。
 
 按上面的源码安装步骤更新服务/CLI，并更新受管 zsh 启动代码。新开的交互式 shell
 中检查 `codex-monitor --version`、`whence -w codex` 和 `whence -p codex`；原有

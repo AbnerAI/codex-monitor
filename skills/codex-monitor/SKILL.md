@@ -67,6 +67,13 @@ not a native Codex footer field.
 
 ### Automatic new Codex shells
 
+**Default routing after automatic setup: the launcher manages the display;
+the agent does not attach it again.** A prior opt-in applies to subsequent
+eligible launches. Do not ask the user to confirm a terminal UUID on every new
+shell, and do not run `iterm attach` as an automatic setup or acceptance step.
+The manual mismatch-confirmation rule below applies only when the user has
+chosen manual binding or explicitly requested retargeting.
+
 The optional launcher supports normal `codex` commands in new interactive zsh
 shells after a one-time opt-in setup. It preserves the original Codex/account
 selection entry point and does not wrap or modify Claude Code. It needs the
@@ -104,6 +111,27 @@ never fabricate them or copy them from another launch. `watch` does not invoke
 automatic attachment: the launcher loop owns display. An indicator failure is separate from an
 already-registered watcher, so do not register a duplicate to retry display.
 
+When asked to inspect automatic display, use read-only diagnostics:
+
+- `iterm identify` reports environment candidates and `observed_launch`.
+  A stale inherited UUID can disagree with the foreground terminal even while
+  the launcher-owned counter works. That mismatch alone is not a request for
+  manual binding or proof that automatic display failed.
+- Inspect the reported live `launch_client` counter and compare its bound
+  thread/profile with the intended conversation. Report unavailable, waiting,
+  ambiguous, or conflicting evidence honestly. A read-only observation does
+  not authorize creating or changing a binding, nor prove visible rendering.
+- If no working automatic launch is established, diagnose the optional runtime,
+  API availability, managed startup block, and any launcher startup warning.
+  Explain the failed/missing prerequisite; do not silently fall back to manual
+  `attach`, select the focused UUID, or ask for UUID confirmation as a workaround.
+- `whence -w codex` checks the hook only in the interactive shell that launches
+  Codex. A noninteractive agent tool shell may not load `.zshrc`; its result
+  alone does not prove the user's startup block is absent.
+
+If the user separately chooses manual binding, follow the manual procedure
+below. Never remove its ownership guard merely to make a diagnostic pass.
+
 The launcher preserves existing components, adds the counter only if missing,
 and restores its captured session layout on normal exit if the user has not
 changed it. It skips noninteractive commands such as `exec`, help/version,
@@ -113,6 +141,10 @@ bar may remain until another Codex launch repairs the stale owned state.
 Do not promise immediate cleanup after a hard kill.
 
 ### Manual current-session setup
+
+Use this branch only for user-chosen manual binding/retargeting, not as a
+fallback for automatic launch verification. A request to verify automatic
+display is not authorization to switch to this branch.
 
 The manual method works with the Python API disabled and
 does not need the optional client. From the intended Codex conversation, with
@@ -139,7 +171,7 @@ back to legacy values. The default manual path honors a valid scoped marker.
 
 `iterm identify` only reports full expected/observed UUIDs, source, and token
 presence; it never reveals tokens or binds the observed terminal. GUI focus is
-not ownership proof. On mismatch, obtain the user's confirmation of the actual
+not ownership proof. During user-chosen manual binding, on mismatch obtain the user's confirmation of the actual
 intended terminal before using an explicit full `--session` UUID. Never infer a
 replacement from descriptive title text, cwd, or history. `undef` is not zero;
 blank can mean zero or intentionally hidden unavailable/ambiguous identity.
