@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codex-monitor"
+version = "0.1.0"
+description = "Persistent file and command watchers that notify the owning Codex CLI thread"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+classifiers = ["Programming Language :: Python :: 3", "Operating System :: POSIX"]
+dependencies = []
+
+[project.optional-dependencies]
+iterm = ["iterm2>=2.30,<3"]
+
+[project.scripts]
+codex-monitor = "codex_monitor.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["codex_monitor*"]
+
+[tool.setuptools.package-data]
+codex_monitor = ["resources/*.js", "resources/iterm_profile_api.py"]
+

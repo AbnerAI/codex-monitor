@@ -1,0 +1,3 @@
+interface:
+  display_name: "Codex Monitor"
+  short_description: "Watch files and commands; notify the owning Codex thread"
