@@ -4,6 +4,45 @@
 由独立 Python 后台服务、CLI、Codex skill 组成。核心监听服务只用标准库；
 可选的 iTerm2 自动显示功能另需独立安装 Python 客户端。
 
+## 技术框架
+
+```mermaid
+flowchart TB
+    skill["Codex skill"] -->|"thread ID + CODEX_HOME"| cli["codex-monitor CLI"]
+
+    subgraph service["本地监听服务 - Python 标准库"]
+        control["私有 Unix 控制 socket<br/>JSONL 请求"]
+        workers["文件 / 命令监听线程"]
+        store[("SQLite<br/>监听定义、读取位置、事件发件箱")]
+        delivery["事件投递阶段<br/>运行于同一监听线程"]
+        control -->|"登记 / 停止"| workers
+        workers -->|"读取位置与新增事件同事务提交"| store
+        store -->|"待投递事件"| delivery
+    end
+
+    cli -->|"watch / list / unwatch"| control
+    files["NDJSON 文件记录"] --> workers
+    commands["定时执行的限时查询命令"] --> workers
+    delivery -->|"Unix WebSocket RPC<br/>turn/start + toolOutput"| server["已有 Codex app-server"]
+    server -->|"精确目标 thread<br/>忙碌时排队 / 空闲时启动新回合"| conversation["官方 Codex CLI 原会话"]
+
+    subgraph iterm["可选的 iTerm2 监听计数"]
+        launcher["仅包装 codex 的启动入口"]
+        updater["当前会话计数更新器"]
+        bar["iTerm2 状态栏<br/>monitor-2"]
+        launcher -->|"Python API<br/>保存 / 添加 / 恢复布局"| bar
+        updater -->|"AppleEvents<br/>user.codexMonitor"| bar
+    end
+
+    launcher -.->|"保留原入口并传入本次工具环境"| conversation
+    cli -.->|"登记监听时绑定<br/>有效租约 + 精确终端 UUID"| updater
+    updater -.->|"查询监听列表<br/>按 thread + CODEX_HOME 筛选"| control
+```
+
+skill 通过 CLI 控制常驻监听。监听线程将读取位置与新增事件在同一事务中保存，
+再通过已有 app-server 投递到原 Codex 会话；等待用户输入或审批时，事件继续暂存。
+可选的 iTerm2 分支只显示该会话的活跃监听数，与事件投递流程独立。
+
 ## 安装与使用
 
 需要 macOS/Linux、Python 3.9+、已登录且启用共享 app-server 的兼容 Codex CLI。

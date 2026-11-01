@@ -5,6 +5,47 @@ owning **Codex CLI conversation**, including while that conversation is idle.
 
 [中文说明](README.zh-CN.md)
 
+## Architecture
+
+```mermaid
+flowchart TB
+    skill["Codex skill"] -->|"thread ID + CODEX_HOME"| cli["codex-monitor CLI"]
+
+    subgraph service["Local monitor service - Python standard library"]
+        control["Private Unix control socket<br/>JSONL requests"]
+        workers["File / command watcher workers"]
+        store[("SQLite<br/>watchers, checkpoints, event outbox")]
+        delivery["Delivery stage<br/>inside the same watcher worker"]
+        control -->|"register / stop"| workers
+        workers -->|"atomic checkpoint + events"| store
+        store -->|"pending events"| delivery
+    end
+
+    cli -->|"watch / list / unwatch"| control
+    files["NDJSON file records"] --> workers
+    commands["Bounded command polls"] --> workers
+    delivery -->|"Unix WebSocket RPC<br/>turn/start + toolOutput"| server["Existing Codex app-server"]
+    server -->|"exact owning thread<br/>busy: queue / idle: start turn"| conversation["Official Codex CLI conversation"]
+
+    subgraph iterm["Optional iTerm2 status counter"]
+        launcher["Codex-only launch wrapper"]
+        updater["Scoped count updater"]
+        bar["iTerm2 status bar<br/>monitor-2"]
+        launcher -->|"Python API<br/>capture / add / restore layout"| bar
+        updater -->|"AppleEvents<br/>user.codexMonitor"| bar
+    end
+
+    launcher -.->|"original entry + scoped tool environment"| conversation
+    cli -.->|"watch-time binding<br/>valid lease + exact terminal UUID"| updater
+    updater -.->|"poll watcher list<br/>filter thread + CODEX_HOME"| control
+```
+
+The skill controls persistent watchers through the CLI. Workers commit each
+source checkpoint and its new events together, then deliver to the owning
+Codex thread through the existing app-server. Events remain pending when the
+thread needs user input or approval. The optional iTerm2 branch displays only
+that conversation's active watcher count; it is independent of event delivery.
+
 Inspired by [AbnerAI/dsh-monitor](https://github.com/AbnerAI/dsh-monitor). This is
 an independent Python implementation for Codex, not a DeepSeek Harness plugin.
 The watcher service uses only the standard library. Automatic iTerm2 display
@@ -272,15 +313,6 @@ shell. The current label format is
 [current-session settings scope](https://iterm2.com/documentation-menu-items.html#session-edit-session).
 
 ## How delivery works
-
-```mermaid
-flowchart LR
-  A[File append or command change] --> B[Monitor service]
-  B --> C[SQLite checkpoint and outbox]
-  C --> D[Existing Codex app-server]
-  D --> E[Exact owning thread]
-  F[Skill or CLI] --> B
-```
 
 The service uses Codex's documented
 [Unix WebSocket and standalone tool-output APIs](https://learn.chatgpt.com/docs/app-server).
